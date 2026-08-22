@@ -144,4 +144,4 @@ def test_cli_discover_json_is_machine_readable(capsys) -> None:
     payload = json.loads(capsys.readouterr().out)
     assert payload[0]["runtime_id"] == "windows-current"
     assert payload[0]["surfaces"] == ["cli", "desktop"]
-    assert payload[0]["source_root"] == "C:\\Hermes\\hermes-agent"
+    assert payload[0]["source_root"] == str(Path("C:/Hermes/hermes-agent"))

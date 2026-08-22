@@ -57,6 +57,8 @@ jobs:
         run: |
           git clone --filter=blob:none https://github.com/NousResearch/hermes-agent.git "$RUNNER_TEMP/hermes-agent"
           git -C "$RUNNER_TEMP/hermes-agent" checkout "${{ steps.manifest.outputs.base }}"
+          git -C "$RUNNER_TEMP/hermes-agent" config user.name "Hermes Cursor Native CI"
+          git -C "$RUNNER_TEMP/hermes-agent" config user.email "actions@users.noreply.github.com"
           python -c 'import json; print("\n".join(json.load(open("install-manifest.json"))["patch_series"]))' > "$RUNNER_TEMP/patch-series.txt"
           while IFS= read -r patch; do
             git -C "$RUNNER_TEMP/hermes-agent" am "$GITHUB_WORKSPACE/patches/hermes/0.20.5/$patch"
