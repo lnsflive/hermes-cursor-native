@@ -1,0 +1,199 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from hermes_cursor_native.discovery import (
+    AmbiguousRuntimeError,
+    Candidate,
+    ProbeResult,
+    RuntimeDiscovery,
+    RuntimeNotFoundError,
+    select_runtime,
+)
+
+
+def _probe(candidate: Candidate) -> ProbeResult:
+    return ProbeResult(
+        usable=candidate.executable is not None,
+        version="0.20.5" if candidate.executable else "",
+        source_root=candidate.source_root,
+        executable=candidate.executable,
+    )
+
+
+def test_windows_current_legacy_and_wsl_remain_separate(tmp_path: Path) -> None:
+    current = tmp_path / "LocalAppData" / "hermes"
+    legacy = tmp_path / "User" / ".hermes"
+    wsl = Path("/home/stripes/.hermes")
+
+    candidates = [
+        Candidate(
+            runtime_id="windows-current",
+            surface="cli",
+            platform="windows",
+            home=current,
+            source_root=current / "hermes-agent",
+            executable=current / "hermes-agent/venv/Scripts/hermes.exe",
+            active_hint=True,
+        ),
+        Candidate(
+            runtime_id="windows-legacy",
+            surface="legacy",
+            platform="windows",
+            home=legacy,
+            source_root=None,
+            executable=None,
+            active_hint=False,
+        ),
+        Candidate(
+            runtime_id="wsl:Ubuntu",
+            surface="cli",
+            platform="wsl",
+            home=wsl,
+            source_root=wsl / "hermes-agent",
+            executable=Path("/home/stripes/.local/bin/hermes"),
+            active_hint=False,
+        ),
+    ]
+
+    runtimes = RuntimeDiscovery(probe=_probe).classify(candidates)
+
+    assert [r.runtime_id for r in runtimes] == [
+        "windows-current",
+        "windows-legacy",
+        "wsl:Ubuntu",
+    ]
+    assert runtimes[0].status == "active"
+    assert runtimes[1].status == "legacy/inactive"
+    assert runtimes[2].platform == "wsl"
+    assert runtimes[0].home != runtimes[1].home != runtimes[2].home
+
+
+def test_duplicate_candidates_for_same_backend_are_collapsed(tmp_path: Path) -> None:
+    root = tmp_path / "hermes" / "hermes-agent"
+    executable = root / "venv/Scripts/hermes.exe"
+    candidates = [
+        Candidate("windows-current", "cli", "windows", root.parent, root, executable, True),
+        Candidate("desktop-local", "desktop", "windows", root.parent, root, executable, True),
+    ]
+
+    runtimes = RuntimeDiscovery(probe=_probe).classify(candidates)
+
+    assert len(runtimes) == 1
+    assert runtimes[0].runtime_id == "windows-current"
+    assert runtimes[0].surfaces == ("cli", "desktop")
+
+
+def test_same_posix_path_in_different_wsl_distros_never_collapses() -> None:
+    candidates = [
+        Candidate(
+            "wsl:Ubuntu",
+            "cli",
+            "wsl",
+            Path("/home/test/.hermes"),
+            Path("/home/test/.hermes/hermes-agent"),
+            Path("/home/test/.local/bin/hermes"),
+            False,
+        ),
+        Candidate(
+            "wsl:Debian",
+            "cli",
+            "wsl",
+            Path("/home/test/.hermes"),
+            Path("/home/test/.hermes/hermes-agent"),
+            Path("/home/test/.local/bin/hermes"),
+            False,
+        ),
+    ]
+
+    runtimes = RuntimeDiscovery(probe=_probe).classify(candidates)
+
+    assert [runtime.runtime_id for runtime in runtimes] == ["wsl:Ubuntu", "wsl:Debian"]
+
+
+def test_select_runtime_uses_only_usable_active_runtime(tmp_path: Path) -> None:
+    root = tmp_path / "active"
+    runtimes = RuntimeDiscovery(probe=_probe).classify(
+        [
+            Candidate(
+                "windows-current",
+                "cli",
+                "windows",
+                root,
+                root / "hermes-agent",
+                root / "hermes-agent/venv/Scripts/hermes.exe",
+                True,
+            ),
+            Candidate("windows-legacy", "legacy", "windows", tmp_path / "old", None, None, False),
+        ]
+    )
+
+    selected = select_runtime(runtimes)
+
+    assert selected.runtime_id == "windows-current"
+
+
+def test_select_runtime_fails_closed_when_multiple_usable_runtimes_exist(tmp_path: Path) -> None:
+    candidates = [
+        Candidate(
+            "windows-current",
+            "cli",
+            "windows",
+            tmp_path / "win",
+            tmp_path / "win/hermes-agent",
+            tmp_path / "win/hermes-agent/venv/Scripts/hermes.exe",
+            True,
+        ),
+        Candidate(
+            "wsl:Ubuntu",
+            "cli",
+            "wsl",
+            Path("/home/stripes/.hermes"),
+            Path("/home/stripes/.hermes/hermes-agent"),
+            Path("/home/stripes/.local/bin/hermes"),
+            True,
+        ),
+    ]
+    runtimes = RuntimeDiscovery(probe=_probe).classify(candidates)
+
+    with pytest.raises(AmbiguousRuntimeError):
+        select_runtime(runtimes)
+
+
+def test_select_runtime_accepts_explicit_runtime_id(tmp_path: Path) -> None:
+    candidates = [
+        Candidate(
+            "windows-current",
+            "cli",
+            "windows",
+            tmp_path / "win",
+            tmp_path / "win/hermes-agent",
+            tmp_path / "win/hermes-agent/venv/Scripts/hermes.exe",
+            True,
+        ),
+        Candidate(
+            "wsl:Ubuntu",
+            "cli",
+            "wsl",
+            Path("/home/stripes/.hermes"),
+            Path("/home/stripes/.hermes/hermes-agent"),
+            Path("/home/stripes/.local/bin/hermes"),
+            True,
+        ),
+    ]
+    runtimes = RuntimeDiscovery(probe=_probe).classify(candidates)
+
+    selected = select_runtime(runtimes, requested="wsl:Ubuntu")
+
+    assert selected.runtime_id == "wsl:Ubuntu"
+
+
+def test_select_runtime_rejects_unknown_runtime(tmp_path: Path) -> None:
+    runtimes = RuntimeDiscovery(probe=_probe).classify(
+        [Candidate("windows-legacy", "legacy", "windows", tmp_path, None, None, False)]
+    )
+
+    with pytest.raises(RuntimeNotFoundError):
+        select_runtime(runtimes, requested="does-not-exist")

@@ -1,0 +1,45 @@
+name: Bug report
+description: Report a reproducible installer, provider, OAuth, bridge, or compatibility failure
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "Do not include credentials, auth files, session dumps, or private logs."
+  - type: input
+    id: version
+    attributes:
+      label: Hermes Cursor Native version
+    validations:
+      required: true
+  - type: input
+    id: hermes
+    attributes:
+      label: Hermes version and install type
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options: [Windows, WSL, Linux, macOS, Remote backend]
+    validations:
+      required: true
+  - type: textarea
+    id: runtimes
+    attributes:
+      label: Redacted `discover --json` output
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior

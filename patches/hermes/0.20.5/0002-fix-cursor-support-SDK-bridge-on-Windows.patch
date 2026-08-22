@@ -1,0 +1,98 @@
+From 812f2bc2c9b2ae67dfb7c30b961eec6a86fb5e42 Mon Sep 17 00:00:00 2001
+From: Jaime Gonzalez <lnsflive@gmail.com>
+Date: Fri, 21 Aug 2026 23:27:58 -0500
+Subject: [PATCH 2/4] fix(cursor): support SDK bridge on Windows
+
+---
+ agent/cursor_bridge_transport.py            | 4 +++-
+ hermes_cli/config_defaults.py               | 8 ++++++++
+ tests/agent/test_cursor_bridge_transport.py | 6 ++++--
+ tests/agent/test_cursor_sdk_auth.py         | 6 +++++-
+ 4 files changed, 20 insertions(+), 4 deletions(-)
+
+diff --git a/agent/cursor_bridge_transport.py b/agent/cursor_bridge_transport.py
+index d62672a386..ceead2b17f 100644
+--- a/agent/cursor_bridge_transport.py
++++ b/agent/cursor_bridge_transport.py
+@@ -155,7 +155,9 @@ def bridge_install_dir() -> Path:
+ 
+ 
+ def _launcher_name() -> str:
+-    return "cursor-sdk-bridge.cmd" if os.name == "nt" else "cursor-sdk-bridge"
++    # Official win32 release assets ship a native .exe, while POSIX archives
++    # ship an extensionless launcher.
++    return "cursor-sdk-bridge.exe" if os.name == "nt" else "cursor-sdk-bridge"
+ 
+ 
+ def _bridge_from_cursor_sdk_wheel() -> str | None:
+diff --git a/hermes_cli/config_defaults.py b/hermes_cli/config_defaults.py
+index 4b337df8fb..188b82abbd 100644
+--- a/hermes_cli/config_defaults.py
++++ b/hermes_cli/config_defaults.py
+@@ -3705,6 +3705,14 @@ OPTIONAL_ENV_VARS = {
+         "category": "provider",
+         "advanced": True,
+     },
++    "CURSOR_API_KEY": {
++        "description": "Cursor SDK credential fallback (browser OAuth via `hermes cursor login` is preferred)",
++        "prompt": "Cursor API key (leave empty to use Cursor OAuth)",
++        "url": "https://cursor.com/dashboard/api",
++        "password": True,
++        "category": "provider",
++        "advanced": True,
++    },
+     "GOOGLE_API_KEY": {
+         "description": "Google AI Studio API key (also recognized as GEMINI_API_KEY)",
+         "prompt": "Google AI Studio API key",
+diff --git a/tests/agent/test_cursor_bridge_transport.py b/tests/agent/test_cursor_bridge_transport.py
+index dbc06be3fa..044461f431 100644
+--- a/tests/agent/test_cursor_bridge_transport.py
++++ b/tests/agent/test_cursor_bridge_transport.py
+@@ -1,6 +1,7 @@
+ """Tests for bridge discovery parsing and the Connect JSON transport."""
+ 
+ import json
++import os
+ import struct
+ import threading
+ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+@@ -94,9 +95,10 @@ class TestResolveBridgeCommand:
+         monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+         monkeypatch.delenv("CURSOR_SDK_BRIDGE_BIN", raising=False)
+         monkeypatch.setenv("PATH", str(tmp_path / "empty-path"))
+-        launcher = tmp_path / "cursor-sdk-bridge" / "cursor-sdk-bridge" / "bin" / "cursor-sdk-bridge"
++        launcher_name = "cursor-sdk-bridge.exe" if os.name == "nt" else "cursor-sdk-bridge"
++        launcher = tmp_path / "cursor-sdk-bridge" / "cursor-sdk-bridge" / "bin" / launcher_name
+         launcher.parent.mkdir(parents=True)
+-        launcher.write_text("#!/bin/sh\n")
++        launcher.write_text("test launcher\n" if os.name == "nt" else "#!/bin/sh\n")
+         assert resolve_bridge_command() == str(launcher)
+ 
+     def test_returns_none_when_nothing_installed(self, tmp_path, monkeypatch):
+diff --git a/tests/agent/test_cursor_sdk_auth.py b/tests/agent/test_cursor_sdk_auth.py
+index 8282e97f20..bd0e891024 100644
+--- a/tests/agent/test_cursor_sdk_auth.py
++++ b/tests/agent/test_cursor_sdk_auth.py
+@@ -3,6 +3,7 @@
+ import base64
+ import hashlib
+ import json
++import os
+ import threading
+ import time
+ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+@@ -196,7 +197,10 @@ class TestCredentialStore:
+             api_key_expires_at_ms=int(time.time() * 1000) + 60_000,
+             email="me@example.com",
+         )
+-        assert oct(path.stat().st_mode & 0o777) == "0o600"
++        # Windows does not enforce or report POSIX mode bits on NTFS. The file
++        # inherits the current user's profile-directory ACL instead.
++        if os.name != "nt":
++            assert oct(path.stat().st_mode & 0o777) == "0o600"
+         stored = read_sdk_credentials()
+         assert stored["apiKey"] == "key_abc"
+         assert stored["email"] == "me@example.com"
+-- 
+2.54.0.windows.1
+

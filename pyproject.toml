@@ -1,0 +1,66 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hermes-cursor-native"
+version = "0.1.0a1"
+description = "Native Cursor model provider installer for Hermes Agent"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "lnsflive" }]
+keywords = [
+  "hermes-agent",
+  "cursor",
+  "cursor-sdk",
+  "composer-2.5",
+  "grok-4.6",
+  "oauth",
+  "model-provider",
+]
+dependencies = []
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: Microsoft :: Windows :: Windows 10",
+  "Operating System :: Microsoft :: Windows :: Windows 11",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+
+[project.optional-dependencies]
+dev = [
+  "build>=1.2",
+  "pytest>=8.3",
+  "ruff>=0.11",
+]
+
+[project.scripts]
+hermes-cursor-native = "hermes_cursor_native.cli:entrypoint"
+
+[project.urls]
+Homepage = "https://github.com/lnsflive/hermes-cursor-native"
+Documentation = "https://github.com/lnsflive/hermes-cursor-native#readme"
+Issues = "https://github.com/lnsflive/hermes-cursor-native/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hermes_cursor_native"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"install-manifest.json" = "hermes_cursor_native/install-manifest.json"
+"patches/hermes/0.20.5" = "hermes_cursor_native/patches/hermes/0.20.5"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

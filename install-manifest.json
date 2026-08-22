@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "project": "hermes-cursor-native",
+  "version": "0.1.0a1",
+  "status": "alpha",
+  "supported_hermes": [
+    "0.20.5"
+  ],
+  "base_commits": [
+    "9ddb6547a062a81510a943cc54f525c25cf63d8f"
+  ],
+  "bridge_version": "1.0.27",
+  "artifacts": {
+    "windows-x64": {
+      "filename": "cursor-sdk-bridge-standalone-win32-x64.tar.gz",
+      "url": "https://github.com/cursor/sdk-bridge/releases/download/v1.0.27/cursor-sdk-bridge-standalone-win32-x64.tar.gz",
+      "sha256": "c373c01da4a8808137cf8578adc6d7f5a4a8a9f0bf5dd288fbba9b6b3e62d9b3"
+    },
+    "linux-x64": {
+      "filename": "cursor-sdk-bridge-standalone-linux-x64.tar.gz",
+      "url": "https://github.com/cursor/sdk-bridge/releases/download/v1.0.27/cursor-sdk-bridge-standalone-linux-x64.tar.gz",
+      "sha256": "114e6b7b284c31006979e8b4340c66ba60015d2143f62d76ce4d7584f80068c2"
+    },
+    "linux-arm64": {
+      "filename": "cursor-sdk-bridge-standalone-linux-arm64.tar.gz",
+      "url": "https://github.com/cursor/sdk-bridge/releases/download/v1.0.27/cursor-sdk-bridge-standalone-linux-arm64.tar.gz",
+      "sha256": "6d2e7b12875003045923d038a56df06b309e80a7d2500a4c5261d5511b1db40c"
+    },
+    "macos-x64": {
+      "filename": "cursor-sdk-bridge-standalone-darwin-x64.tar.gz",
+      "url": "https://github.com/cursor/sdk-bridge/releases/download/v1.0.27/cursor-sdk-bridge-standalone-darwin-x64.tar.gz",
+      "sha256": "f8d6be39cc379420746cc7d09adad51843d095802a9af872858ad5fb3304b1f6"
+    },
+    "macos-arm64": {
+      "filename": "cursor-sdk-bridge-standalone-darwin-arm64.tar.gz",
+      "url": "https://github.com/cursor/sdk-bridge/releases/download/v1.0.27/cursor-sdk-bridge-standalone-darwin-arm64.tar.gz",
+      "sha256": "0d544fd30d5c0f93cb8ade0cb5fbfbea10cf2e55c4669f74f26dd36d6a5bb0ba"
+    }
+  },
+  "patch_series": [
+    "0001-feat-providers-Cursor-subscription-support-via-the-o.patch",
+    "0002-fix-cursor-support-SDK-bridge-on-Windows.patch",
+    "0003-fix-cli-select-provider-default-model-on-override.patch",
+    "0004-fix-cursor-harden-bridge-trust-boundaries.patch"
+  ],
+  "provider_file_sha256": {
+    "agent/agent_init.py": "8e45726a9f382333b2c346c9f4e10c40acde60403e8842915847f9664085bfdd",
+    "agent/agent_runtime_helpers.py": "d5aa636e0e55871ac6a362da2ed94e37c53f1c2cbf9417ca8d26ce9187d893b7",
+    "agent/auxiliary_client.py": "5111315f806d8008140da50488785e2947aa143edcdcd08efccfe078bf43514a",
+    "agent/conversation_loop.py": "41226ae6912acb7f19f1ed10bb6c2bc38d742e30f0c1bc3e8c29c5cbd213b5b1",
+    "agent/cursor_bridge_client.py": "7090286026f5cbb90b114665165d5678b010876c02c8837aab47546549c50712",
+    "agent/cursor_bridge_transport.py": "477213eca9fa53c6e59ecf81744d52fcb83ca595cd499f28a5b8be1f726b8019",
+    "agent/cursor_bridge_wire.py": "00889063886e3bccc30b481420aa68ac69e709c2c63c337fe730ecb4b2da50ba",
+    "agent/cursor_sdk_auth.py": "0e922043d55a8293d0be7abd01c8bf8b03362babd5712a5be92630ead6862cc9",
+    "cli-config.yaml.example": "a4f237b7f50f011ad5c9da90c24bd2b316dd212a578e70aa8cc13bb663471302",
+    "cli.py": "d4cb44e2c9096ae76a8d62b124025e1954920b46228ca122ab30d851dc565d3c",
+    "gateway/run.py": "3a1ada639f26b3056e80fca692694a93407fd3886b32a1b8cef8c3938932e8e2",
+    "gateway/slash_commands.py": "e5a84a2e5823b5fc97f8cf6683007bf4375a41c89044b2e9bde059aee86faf86",
+    "hermes_cli/auth.py": "b6538282122e1959fb6367ca812aa1b22b07bb9e86ecf94ce676427e1a015a59",
+    "hermes_cli/cli_commands_mixin.py": "700a9bcdfc258ad5b9ac57970662eced34c87ce14b80d603f1f1d16a7c2ad4ec",
+    "hermes_cli/commands.py": "641f01de983267f3d3867ddfdb806b2c2532e0117c283d5f0314bb7df6509dda",
+    "hermes_cli/config_defaults.py": "1e8bfa86821487f6bbcd1b3c0e7422d42a35ea131183c3bc7041b2b33862bf1c",
+    "hermes_cli/cursor_cloud.py": "d5514c2a618341156377801f95920cb4c02ef7571e42c923f9aeb003a69b9fff",
+    "hermes_cli/main.py": "12de2614077f3fbb128fe3597b651547c113cab5a56e245950ddc24abcd3110e",
+    "hermes_cli/model_setup_flows.py": "72b36c7dff62e5b036d17c93be203b2dd19f60e9ecea9a47d718a9f58900fb91",
+    "hermes_cli/model_switch.py": "fef603360034272a8eea6a33b4aa7d4a41d27661b9c893897f67b0a1f43ca97e",
+    "hermes_cli/models.py": "1ba1bad8f56e5ed6841706f6a12c1cb5f5e7d0ab8679e3e4479da4eff72e0693",
+    "hermes_cli/providers.py": "8fec129dad22c46cedff91739e89eef35811324d81bc6f4c8909bb273b951c36",
+    "hermes_cli/subcommands/cursor_agent.py": "879a3b5eb3f0300a38887842723aaae54f3888ab68467d8da0e444d80d08e17b",
+    "plugins/model-providers/cursor/__init__.py": "dc8801455d9a1eb91f0d60c6ac861323512d0892a1f21eaf2614c76e7e405b4d",
+    "plugins/model-providers/cursor/plugin.yaml": "d0c75874577000a37822e0b9a404f1c3ef6cf01dc7bf21c5359ed047f7c66ff5"
+  },
+  "capabilities": {
+    "oauth": true,
+    "full_model_catalog": true,
+    "hermes_tool_loop": true,
+    "profiles": true,
+    "gateway": true
+  },
+  "requires_user_interaction": [
+    "runtime_selection_when_ambiguous",
+    "cursor_browser_oauth"
+  ]
+}
