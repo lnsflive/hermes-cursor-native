@@ -28,6 +28,7 @@ def _deploy_plugin(package_root: Path, hermes_home: Path) -> Path:
     shutil.copytree(source, destination)
     return destination
 
+
 _INTERFACE_PROBE = """
 import json
 import sys
@@ -189,7 +190,9 @@ def _run_probe(python: Path, source_root: Path, script: str, *, env: dict[str, s
         check=False,
     )
     if completed.returncode != 0:
-        detail = completed.stderr.strip() or completed.stdout.strip() or f"exit {completed.returncode}"
+        detail = (
+            completed.stderr.strip() or completed.stdout.strip() or f"exit {completed.returncode}"
+        )
         raise RuntimeError(detail)
     return json.loads(completed.stdout.strip() or "{}")
 
@@ -287,4 +290,3 @@ def probe_runtime(
         client_contract=client_contract if interface_ready else False,
         notes=tuple(notes),
     )
-

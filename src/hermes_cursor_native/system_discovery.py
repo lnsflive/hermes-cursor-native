@@ -181,9 +181,7 @@ _VERSION_RE = re.compile(r"Hermes Agent v([^\s]+)")
 _ROOT_RE = re.compile(r"^(?:Install directory|Project):\s*(.+?)\s*$", re.MULTILINE)
 
 
-def parse_version_output(
-    output: str, *, path_style: str = "native"
-) -> tuple[str, PurePath | None]:
+def parse_version_output(output: str, *, path_style: str = "native") -> tuple[str, PurePath | None]:
     version_match = _VERSION_RE.search(output)
     root_match = _ROOT_RE.search(output)
     version = version_match.group(1) if version_match else ""

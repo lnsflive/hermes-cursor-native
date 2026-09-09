@@ -42,4 +42,4 @@ hermes chat --provider cursor -m "Reply exactly UPDATE_OK" --max-tokens 20
 
 ## Historical patch mode
 
-Legacy patch-based deployments used `cursor-provider-deployed` branches and `git am`. That path is **not** supported by the current installer. See `patches/hermes/` for provenance only.
+Legacy patch-based deployments used `cursor-provider-deployed` branches and `git am`. That path is **not** supported by the current installer. See Git history for provenance.

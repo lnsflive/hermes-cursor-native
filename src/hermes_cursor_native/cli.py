@@ -11,9 +11,14 @@ from pathlib import Path
 
 from .discovery import AmbiguousRuntimeError, DiscoveryError, Runtime, select_runtime
 from .install_plan import InstallBlockedError, InstallPlan, build_install_plan
-from .manifest import InstallManifest
-from .installer import InstallerError, _find_bridge, execute_install_plan, run_command, run_cursor_oauth
-from .manifest import default_manifest_path, load_manifest, package_data_root
+from .installer import (
+    InstallerError,
+    _find_bridge,
+    execute_install_plan,
+    run_command,
+    run_cursor_oauth,
+)
+from .manifest import InstallManifest, default_manifest_path, load_manifest, package_data_root
 from .preflight import detect_architecture
 from .rendering import render_runtime_table
 from .system_discovery import discover_system
@@ -53,7 +58,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     install.add_argument("--profile", default="default", help="Hermes profile to configure")
     install.add_argument("--manifest", type=Path, default=default_manifest_path())
-    install.add_argument("--dry-run", action="store_true", help="Print every operation; write nothing")
+    install.add_argument(
+        "--dry-run", action="store_true", help="Print every operation; write nothing"
+    )
     install.add_argument("--yes", action="store_true", help="Approve the displayed plan")
     install.add_argument(
         "--oauth",
@@ -199,6 +206,7 @@ def main(
             if approved not in {"y", "yes"}:
                 return 1
         if apply_plan is None:
+
             def apply_plan(selected_plan: InstallPlan) -> None:
                 result = execute_install_plan(
                     selected_plan,
@@ -206,6 +214,7 @@ def main(
                     approved=True,
                 )
                 print(result.receipt.to_json())
+
         apply_plan(plan)
         return 0
     return 2

@@ -2,9 +2,9 @@
 
 ## Hermes Agent Cursor provider integration
 
-The versioned patch series under `patches/hermes/` originates from work contributed to [NousResearch/hermes-agent PR #81502](https://github.com/NousResearch/hermes-agent/pull/81502).
+The original patch series, preserved in Git history, originates from work contributed to [NousResearch/hermes-agent PR #81502](https://github.com/NousResearch/hermes-agent/pull/81502).
 
-Primary authorship is preserved in the generated `git format-patch` files:
+Primary authorship is preserved in Git history and the original patch headers:
 
 - Cursor Agent
 - Ethan Troy

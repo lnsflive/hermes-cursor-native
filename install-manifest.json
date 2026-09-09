@@ -4,7 +4,6 @@
   "version": "0.2.0a1",
   "status": "alpha",
   "bridge_version": "1.0.27",
-  "plugin_commit": "96b941f",
   "artifacts": {
     "windows-x64": {
       "filename": "cursor-sdk-bridge-standalone-win32-x64.tar.gz",

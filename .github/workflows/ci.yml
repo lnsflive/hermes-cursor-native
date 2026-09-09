@@ -43,6 +43,10 @@ jobs:
         run: bash -n install.sh
 
   stock-hermes-contract:
+    strategy:
+      fail-fast: false
+      matrix:
+        hermes-ref: [v0.21.1, main]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -51,7 +55,7 @@ jobs:
           python-version: "3.11"
       - name: Clone stock Hermes Agent
         run: |
-          git clone --filter=blob:none --depth 1 --branch v0.21.1 https://github.com/NousResearch/hermes-agent.git "$RUNNER_TEMP/hermes-agent"
+          git clone --filter=blob:none --depth 1 --branch "${{ matrix.hermes-ref }}" https://github.com/NousResearch/hermes-agent.git "$RUNNER_TEMP/hermes-agent"
       - name: Install Hermes dependencies
         working-directory: ${{ runner.temp }}/hermes-agent
         run: uv sync --extra dev
@@ -60,4 +64,4 @@ jobs:
           HERMES_AGENT_ROOT: ${{ runner.temp }}/hermes-agent
         run: |
           uv sync --extra dev
-          uv run pytest -q tests/test_client_contract.py
+          uv run pytest -q tests/test_client_contract.py tests/test_auth_shim.py tests/test_ui_integration.py tests/test_native_plugin.py

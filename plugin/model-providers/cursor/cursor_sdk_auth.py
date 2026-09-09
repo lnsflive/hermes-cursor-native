@@ -20,6 +20,7 @@ device-code-style flow): only the process holding the verifier can redeem it.
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import json
 import logging
@@ -31,9 +32,10 @@ import time
 import urllib.error
 import urllib.request
 import uuid as uuid_module
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -75,9 +77,7 @@ def create_login_handshake(website_url: str = "") -> LoginHandshake:
     website_url = resolve_website_url(website_url)
     verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")
     challenge = (
-        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
-        .decode()
-        .rstrip("=")
+        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
     )
     login_uuid = str(uuid_module.uuid4())
     login_url = (
@@ -99,11 +99,7 @@ def _is_route_not_found_body(body: bytes) -> bool:
     except ValueError:
         return False
     message = parsed.get("message")
-    return (
-        isinstance(message, str)
-        and message.startswith("Route ")
-        and "not found" in message
-    )
+    return isinstance(message, str) and message.startswith("Route ") and "not found" in message
 
 
 def poll_for_login_tokens(
@@ -127,7 +123,7 @@ def poll_for_login_tokens(
     use_get = False
     consecutive_errors = 0
     for attempt in range(max_attempts):
-        delay = min(_POLL_BASE_DELAY_S * (_POLL_BACKOFF ** attempt), _POLL_MAX_DELAY_S)
+        delay = min(_POLL_BASE_DELAY_S * (_POLL_BACKOFF**attempt), _POLL_MAX_DELAY_S)
         try:
             if use_get:
                 request = urllib.request.Request(
@@ -154,9 +150,7 @@ def poll_for_login_tokens(
                     if not use_get and _is_route_not_found_body(body):
                         use_get = True
                         if on_status:
-                            on_status(
-                                "backend has no POST /auth/poll — falling back to GET"
-                            )
+                            on_status("backend has no POST /auth/poll — falling back to GET")
                         continue
                     consecutive_errors = 0
                     sleep(delay)
@@ -287,10 +281,8 @@ def save_sdk_credentials(
 ) -> Path:
     path = sdk_auth_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    try:
+    with contextlib.suppress(OSError):
         path.parent.chmod(0o700)
-    except OSError:
-        pass
     payload: dict[str, Any] = {
         "version": 1,
         "backendUrl": backend_url,
@@ -305,10 +297,8 @@ def save_sdk_credentials(
     tmp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     tmp_path.chmod(0o600)
     tmp_path.replace(path)
-    try:
+    with contextlib.suppress(OSError):
         path.chmod(0o600)
-    except OSError:
-        pass
     return path
 
 
@@ -393,11 +383,36 @@ def login(
     }
 
 
+def cli_auth_path() -> Path:
+    """Cursor CLI's file-backed store for this OS user, if one exists."""
+    home = Path.home()
+    if sys.platform == "win32":
+        return Path(os.getenv("APPDATA") or home / "AppData" / "Roaming") / "Cursor" / "auth.json"
+    if sys.platform == "darwin":
+        return home / ".cursor" / "auth.json"
+    return Path(os.getenv("XDG_CONFIG_HOME") or home / ".config") / "cursor" / "auth.json"
+
+
+def read_cli_api_key() -> str:
+    """Reuse only an API key; never reinterpret OAuth access/refresh tokens.
+
+    This is best-effort compatibility with the CLI's file-backed store. Missing,
+    changed, or keychain-only stores fall back to the SDK browser login. No
+    credential is copied, rewritten, logged, or searched for in other homes.
+    """
+    try:
+        parsed = json.loads(cli_auth_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    key = parsed.get("apiKey") if isinstance(parsed, dict) else None
+    return key.strip() if isinstance(key, str) else ""
+
+
 def resolve_cursor_api_key() -> tuple[str, str]:
-    """Resolve the Cursor credential: explicit env/.env key, else SDK login.
+    """Resolve an explicit key, SDK login, then a same-user CLI API key.
 
     Returns ``(api_key, source)`` where source is ``"env"``,
-    ``"sdk_login"``, or ``("", "")`` when nothing usable exists.
+    ``"sdk_login"``, ``"cli_api_key"``, or ``("", "")`` when nothing usable exists.
     """
     env_key = os.getenv("CURSOR_API_KEY", "").strip()
     if env_key:
@@ -413,6 +428,9 @@ def resolve_cursor_api_key() -> tuple[str, str]:
     stored = read_sdk_credentials()
     if stored:
         return str(stored["apiKey"]), "sdk_login"
+    cli_key = read_cli_api_key()
+    if cli_key:
+        return cli_key, "cli_api_key"
     return "", ""
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -9,8 +10,10 @@ from pathlib import Path
 
 import pytest
 
-HERMES_SOURCE = Path("/root/.hermes/hermes-agent")
-HERMES_PYTHON = HERMES_SOURCE / "venv/bin/python"
+HERMES_SOURCE = Path(os.getenv("HERMES_AGENT_ROOT", str(Path.home() / ".hermes" / "hermes-agent")))
+HERMES_PYTHON = HERMES_SOURCE / (
+    ".venv/bin/python" if (HERMES_SOURCE / ".venv/bin/python").exists() else "venv/bin/python"
+)
 PLUGIN_SRC = Path(__file__).resolve().parents[1] / "plugin" / "model-providers" / "cursor"
 
 
@@ -113,7 +116,15 @@ print(json.dumps(report))
 
 
 @pytest.mark.skipif(not HERMES_PYTHON.is_file(), reason="stock Hermes python not present")
-@pytest.mark.parametrize("first_import", ["", "import hermes_cli.main\n", "import hermes_cli.models\n", "import providers; providers.list_providers()\n"])
+@pytest.mark.parametrize(
+    "first_import",
+    [
+        "",
+        "import hermes_cli.main\n",
+        "import hermes_cli.models\n",
+        "import providers; providers.list_providers()\n",
+    ],
+)
 def test_regression_probe_authenticated_inventory_via_normal_imports(first_import) -> None:
     with tempfile.TemporaryDirectory(prefix="cursor-ui-regression-") as tmp:
         home = Path(tmp)
@@ -185,7 +196,9 @@ def test_picker_shim_via_auth_inventory_models_import_order() -> None:
     with tempfile.TemporaryDirectory(prefix="cursor-ui-models-") as tmp:
         home = Path(tmp)
         _deploy_plugin(home)
-        script = _sdk_auth_script() + """
+        script = (
+            _sdk_auth_script()
+            + """
 from hermes_cli.auth import get_auth_status
 from hermes_cli.inventory import load_picker_context
 from hermes_cli.models import provider_model_ids
@@ -198,6 +211,7 @@ print(json.dumps({
     "model_ids": provider_model_ids("cursor"),
 }))
 """
+        )
         payload = _run_probe(script, home=home)
         assert payload["sdk_creds"] is True
         assert payload["model_ids"]
@@ -208,21 +222,25 @@ def test_logged_out_setup_reaches_browser_login_without_key_prompt() -> None:
     with tempfile.TemporaryDirectory(prefix="cursor-ui-login-") as tmp:
         home = Path(tmp)
         _deploy_plugin(home)
-        payload = _run_probe('''
+        payload = _run_probe(
+            """
 import contextlib, io, json
 from unittest.mock import patch
 import hermes_cli.main as main
 from providers import get_provider_profile
 get_provider_profile("cursor")
 with contextlib.redirect_stdout(io.StringIO()):
-    with patch("_hermes_user_provider_cursor.cursor_sdk_auth.login", side_effect=KeyboardInterrupt) as login:
+    target = "_hermes_user_provider_cursor.cursor_sdk_auth.login"
+    with patch(target, side_effect=KeyboardInterrupt) as login:
         try:
             main._model_flow_api_key_provider({}, "cursor", "")
         except KeyboardInterrupt:
             pass
 print(json.dumps({"browser_login_called": login.call_count == 1}))
-''', home=home)
-        assert payload['browser_login_called']
+""",
+            home=home,
+        )
+        assert payload["browser_login_called"]
 
 
 @pytest.mark.skipif(not HERMES_PYTHON.is_file(), reason="stock Hermes python not present")
@@ -230,11 +248,15 @@ def test_authenticated_cursor_respects_excluded_provider() -> None:
     with tempfile.TemporaryDirectory(prefix="cursor-ui-excluded-") as tmp:
         home = Path(tmp)
         _deploy_plugin(home)
-        payload = _run_probe(_sdk_auth_script() + '''
+        payload = _run_probe(
+            _sdk_auth_script()
+            + """
 from dataclasses import replace
 from hermes_cli.inventory import load_picker_context, build_models_payload
 ctx = replace(load_picker_context(), excluded_providers=["cursor"])
 rows = build_models_payload(ctx, for_picker=True, probe_custom_providers=False)['providers']
 print(json.dumps({"cursor_present": any(r.get("slug") == "cursor" for r in rows)}))
-''', home=home)
-        assert not payload['cursor_present']
+""",
+            home=home,
+        )
+        assert not payload["cursor_present"]

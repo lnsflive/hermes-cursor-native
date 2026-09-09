@@ -49,7 +49,7 @@ Mocked client-contract probes in CI complement but do not replace live receipts.
 
 ## Historical patch mode
 
-Versioned patches under `patches/hermes/` are retained for provenance only. They are **not** used by the current installer. Do not apply them to stock Hermes 0.21.x unless explicitly maintaining a legacy deployment.
+Historical versioned patches are preserved in Git history, not shipped in current installations.
 
 ## Trust boundary
 

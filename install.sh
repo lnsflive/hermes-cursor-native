@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REF="${HCN_REF:-v0.1.0-alpha.1}"
+REF="${HCN_REF:-main}"
 REPO="${HCN_REPO:-https://github.com/lnsflive/hermes-cursor-native.git}"
 if [[ "$REPO" == file:* || -e "$REPO" ]]; then
   SPEC="$REPO"

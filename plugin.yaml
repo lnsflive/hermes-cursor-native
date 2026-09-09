@@ -1,0 +1,5 @@
+name: cursor
+kind: model-provider
+version: 0.2.0a1
+description: Cursor account models and browser login for Hermes via the official SDK bridge
+author: lnsflive

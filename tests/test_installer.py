@@ -10,7 +10,6 @@ import pytest
 from hermes_cursor_native.capabilities import CapabilityReport
 from hermes_cursor_native.discovery import Runtime
 from hermes_cursor_native.install_plan import build_install_plan
-from hermes_cursor_native.manifest import InstallManifest
 from hermes_cursor_native.installer import (
     ApprovalRequiredError,
     CommandResult,
@@ -20,6 +19,7 @@ from hermes_cursor_native.installer import (
     safe_extract_tar,
     verify_sha256,
 )
+from hermes_cursor_native.manifest import InstallManifest
 from hermes_cursor_native.verify import InstallReceipt
 
 
@@ -67,7 +67,9 @@ def test_execute_install_plan_plugin_mode(tmp_path: Path) -> None:
     plugin = package / "plugin/model-providers/cursor"
     plugin.mkdir(parents=True)
     (plugin / "plugin.yaml").write_text("kind: model-provider\n", encoding="utf-8")
-    (plugin / "__init__.py").write_text("from providers import register_provider\n", encoding="utf-8")
+    (plugin / "__init__.py").write_text(
+        "from providers import register_provider\n", encoding="utf-8"
+    )
 
     bridge_name = "cursor-sdk-bridge"
     archive = io.BytesIO()

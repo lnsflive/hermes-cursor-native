@@ -16,6 +16,7 @@ canonical JSON mapping and Connect servers accept it natively).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -26,9 +27,10 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from hermes_constants import get_hermes_home
 
@@ -51,13 +53,25 @@ _GITHUB_RELEASE_URL_TEMPLATE = (
 )
 _PINNED_BRIDGE_SHA256 = {
     "1.0.27": {
-        "cursor-sdk-bridge-standalone-darwin-arm64.tar.gz": "0d544fd30d5c0f93cb8ade0cb5fbfbea10cf2e55c4669f74f26dd36d6a5bb0ba",
-        "cursor-sdk-bridge-standalone-darwin-x64.tar.gz": "f8d6be39cc379420746cc7d09adad51843d095802a9af872858ad5fb3304b1f6",
-        "cursor-sdk-bridge-standalone-linux-arm64.tar.gz": "6d2e7b12875003045923d038a56df06b309e80a7d2500a4c5261d5511b1db40c",
-        "cursor-sdk-bridge-standalone-linux-x64.tar.gz": "114e6b7b284c31006979e8b4340c66ba60015d2143f62d76ce4d7584f80068c2",
-        "cursor-sdk-bridge-standalone-win32-x64.tar.gz": "c373c01da4a8808137cf8578adc6d7f5a4a8a9f0bf5dd288fbba9b6b3e62d9b3",
+        "cursor-sdk-bridge-standalone-darwin-arm64.tar.gz": (
+            "0d544fd30d5c0f93cb8ade0cb5fbfbea10cf2e55c4669f74f26dd36d6a5bb0ba"
+        ),
+        "cursor-sdk-bridge-standalone-darwin-x64.tar.gz": (
+            "f8d6be39cc379420746cc7d09adad51843d095802a9af872858ad5fb3304b1f6"
+        ),
+        "cursor-sdk-bridge-standalone-linux-arm64.tar.gz": (
+            "6d2e7b12875003045923d038a56df06b309e80a7d2500a4c5261d5511b1db40c"
+        ),
+        "cursor-sdk-bridge-standalone-linux-x64.tar.gz": (
+            "114e6b7b284c31006979e8b4340c66ba60015d2143f62d76ce4d7584f80068c2"
+        ),
+        "cursor-sdk-bridge-standalone-win32-x64.tar.gz": (
+            "c373c01da4a8808137cf8578adc6d7f5a4a8a9f0bf5dd288fbba9b6b3e62d9b3"
+        ),
     }
 }
+
+
 class CursorBridgeError(RuntimeError):
     """Raised for bridge process, transport, or Connect-level failures."""
 
@@ -86,7 +100,7 @@ def parse_ready_line(line: str) -> dict[str, Any] | None:
     """
     if not line.startswith(READY_LINE_PREFIX):
         return None
-    raw = line[len(READY_LINE_PREFIX):].strip()
+    raw = line[len(READY_LINE_PREFIX) :].strip()
     try:
         payload = json.loads(raw)
     except ValueError as exc:
@@ -102,13 +116,9 @@ def validate_discovery(payload: dict[str, Any]) -> None:
             f"unsupported bridge discovery schemaVersion={payload.get('schemaVersion')!r}"
         )
     if payload.get("transport") != "tcp":
-        raise CursorBridgeError(
-            f"unsupported bridge transport={payload.get('transport')!r}"
-        )
+        raise CursorBridgeError(f"unsupported bridge transport={payload.get('transport')!r}")
     if payload.get("protocol") != "connect":
-        raise CursorBridgeError(
-            f"unsupported bridge protocol={payload.get('protocol')!r}"
-        )
+        raise CursorBridgeError(f"unsupported bridge protocol={payload.get('protocol')!r}")
 
 
 def endpoint_from_discovery(payload: dict[str, Any]) -> BridgeEndpoint:
@@ -288,9 +298,7 @@ def download_bridge(version: str = "", *, progress: bool = True) -> str:
             f"bridge checksum metadata unavailable for {archive_name}; refusing download"
         )
 
-    github_url = _GITHUB_RELEASE_URL_TEMPLATE.format(
-        version=version, os=os_name, arch=arch
-    )
+    github_url = _GITHUB_RELEASE_URL_TEMPLATE.format(version=version, os=os_name, arch=arch)
     try:
         data = _fetch_url(github_url)
         actual = hashlib.sha256(data).hexdigest()
@@ -316,10 +324,8 @@ def download_bridge(version: str = "", *, progress: bool = True) -> str:
     except (tarfile.TarError, OSError) as exc:
         raise CursorBridgeError(f"bridge archive extraction failed: {exc}") from exc
     finally:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(archive_path)
-        except OSError:
-            pass
 
     # The GitHub standalone archive is flat (bin/, manifest.json, proto/);
     # the packaged mirror archive nests everything under cursor-sdk-bridge/.
@@ -329,9 +335,7 @@ def download_bridge(version: str = "", *, progress: bool = True) -> str:
             bridge_root = candidate
             break
     if bridge_root is None:
-        raise CursorBridgeError(
-            f"bridge manifest not found under {dest_root} after install"
-        )
+        raise CursorBridgeError(f"bridge manifest not found under {dest_root} after install")
     try:
         manifest = json.loads((bridge_root / "manifest.json").read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
@@ -494,16 +498,12 @@ class CursorBridgeProcess:
                 process.terminate()
                 process.wait(timeout=_SHUTDOWN_TIMEOUT_SECONDS)
             except subprocess.TimeoutExpired:
-                try:
+                with contextlib.suppress(OSError):
                     process.kill()
-                except OSError:
-                    pass
             except OSError:
                 pass
-        try:
+        with contextlib.suppress(subprocess.TimeoutExpired, OSError):
             process.wait(timeout=1)
-        except (subprocess.TimeoutExpired, OSError):
-            pass
 
 
 # ── Connect JSON transport ────────────────────────────────────────────────

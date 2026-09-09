@@ -22,9 +22,11 @@ plugin_dest.parent.mkdir(parents=True, exist_ok=True)
 shutil.copytree(PLUGIN_SRC, plugin_dest)
 
 os.environ["HERMES_HOME"] = str(home)
+os.environ["HOME"] = str(home)
+os.environ["USERPROFILE"] = str(home)
 sys.path.insert(0, str(HERMES_SOURCE))
 
-import providers as providers_mod
+import providers as providers_mod  # noqa: E402
 
 providers_mod._discover_providers()
 profile = providers_mod.get_provider_profile("cursor")
@@ -57,7 +59,7 @@ client._callback_server = SimpleNamespace(
     url="http://127.0.0.1:9", auth_token="t", start=lambda: None, stop=lambda: None
 )
 
-import importlib
+import importlib  # noqa: E402
 
 client_module = importlib.import_module(client.__class__.__module__)
 with patch.object(client_module, "resolve_bridge_command", return_value="/bin/true"):

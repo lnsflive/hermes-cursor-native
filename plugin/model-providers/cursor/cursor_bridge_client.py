@@ -29,16 +29,18 @@ resells Cursor inference.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
 import secrets
 import threading
 import time
+from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Callable
+from typing import Any
 
 from openai.types.chat.chat_completion_message_tool_call import (
     ChatCompletionMessageToolCall,
@@ -151,9 +153,7 @@ def format_messages_as_prompt(messages: list[dict[str, Any]]) -> str:
             for call in tool_calls:
                 fn = call.get("function") if isinstance(call, dict) else None
                 if isinstance(fn, dict):
-                    call_lines.append(
-                        f"[tool call] {fn.get('name')}({fn.get('arguments', '{}')})"
-                    )
+                    call_lines.append(f"[tool call] {fn.get('name')}({fn.get('arguments', '{}')})")
             if call_lines:
                 rendered = "\n".join(filter(None, [rendered, *call_lines]))
         if not rendered:
@@ -261,7 +261,7 @@ class _CallbackHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802 — http.server API
         server: _ToolCallbackServer = self.server  # type: ignore[assignment]
         auth = self.headers.get("Authorization") or ""
-        token = auth[len("Bearer "):].strip() if auth.startswith("Bearer ") else ""
+        token = auth[len("Bearer ") :].strip() if auth.startswith("Bearer ") else ""
         if not token or not secrets.compare_digest(token, server.auth_token):
             self._respond_connect_error(401, "unauthenticated", "invalid callback token")
             return
@@ -368,7 +368,7 @@ class _ActiveRun:
 
 
 class _BridgeChatCompletions:
-    def __init__(self, client: "CursorBridgeClient"):
+    def __init__(self, client: CursorBridgeClient):
         self._client = client
 
     def create(self, **kwargs: Any) -> Any:
@@ -376,7 +376,7 @@ class _BridgeChatCompletions:
 
 
 class _BridgeChatNamespace:
-    def __init__(self, client: "CursorBridgeClient"):
+    def __init__(self, client: CursorBridgeClient):
         self.completions = _BridgeChatCompletions(client)
 
 
@@ -408,9 +408,7 @@ class CursorBridgeClient:
         if self._tool_mode not in {"loop", "harness"}:
             self._tool_mode = "loop"
         self._builtin_tools = (
-            bool(builtin_tools)
-            if builtin_tools is not None
-            else bool(settings["builtin_tools"])
+            bool(builtin_tools) if builtin_tools is not None else bool(settings["builtin_tools"])
         )
         self._tool_dispatcher = tool_dispatcher
 
@@ -427,7 +425,11 @@ class CursorBridgeClient:
 
     def _ensure_bridge(self) -> ConnectJsonTransport:
         with self._lock:
-            if self._transport is not None and self._process is not None and self._process.is_alive():
+            if (
+                self._transport is not None
+                and self._process is not None
+                and self._process.is_alive()
+            ):
                 return self._transport
 
             if not self.api_key or self.api_key == "cursor":
@@ -478,15 +480,13 @@ class CursorBridgeClient:
             process, self._process = self._process, None
             callback_server, self._callback_server = self._callback_server, None
         if transport is not None:
-            try:
+            with contextlib.suppress(CursorBridgeError):
                 transport.unary(
                     "SdkBridgeControlService",
                     "Shutdown",
                     {"graceSeconds": 0},
                     timeout=3.0,
                 )
-            except CursorBridgeError:
-                pass
         if process is not None:
             process.stop()
         if callback_server is not None:
@@ -536,7 +536,9 @@ class CursorBridgeClient:
             def dispatcher(name: str, call_args: dict[str, Any], call_id: str | None) -> Any:
                 return handle_function_call(name, call_args, tool_call_id=call_id)
 
-        result = dispatcher(tool_name, args, tool_call_id if isinstance(tool_call_id, str) else None)
+        result = dispatcher(
+            tool_name, args, tool_call_id if isinstance(tool_call_id, str) else None
+        )
         if isinstance(result, dict):
             return result
         text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
@@ -596,8 +598,7 @@ class CursorBridgeClient:
         if isinstance(timeout, (int, float)):
             return float(timeout)
         candidates = [
-            getattr(timeout, attr, None)
-            for attr in ("read", "write", "connect", "pool", "timeout")
+            getattr(timeout, attr, None) for attr in ("read", "write", "connect", "pool", "timeout")
         ]
         numeric = [float(v) for v in candidates if isinstance(v, (int, float))]
         return max(numeric) if numeric else _DEFAULT_TIMEOUT_SECONDS
@@ -688,9 +689,14 @@ class CursorBridgeClient:
             self._cleanup_agent(transport, agent_id)
 
         captured = list(run.captured_calls)
-        if not captured and status and status not in {
-            "RUN_LIFECYCLE_STATUS_FINISHED",
-        }:
+        if (
+            not captured
+            and status
+            and status
+            not in {
+                "RUN_LIFECYCLE_STATUS_FINISHED",
+            }
+        ):
             code_note = f" (code={error_code})" if error_code else ""
             raise CursorBridgeError(
                 f"Cursor run ended with status {status}{code_note}: "

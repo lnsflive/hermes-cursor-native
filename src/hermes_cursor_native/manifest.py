@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 from pathlib import Path
-
-from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -28,6 +27,7 @@ class InstallManifest:
             bridge_version=str(payload.get("bridge_version", "")),
             plugin_commit=str(payload.get("plugin_commit", "")),
         )
+
 
 _SHA256_RE = re.compile(r"[0-9a-fA-F]{64}")
 

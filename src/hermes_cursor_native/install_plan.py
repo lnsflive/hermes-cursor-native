@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -119,7 +119,8 @@ def build_install_plan(
         InstallOperation("backup", "Snapshot profile config before provider install"),
         InstallOperation(
             "plugin",
-            "Install the Cursor model-provider plugin into $HERMES_HOME/plugins/model-providers/cursor",
+            "Install the Cursor model-provider plugin into "
+            "$HERMES_HOME/plugins/model-providers/cursor",
         ),
         InstallOperation("bridge", f"Download and verify {artifact['filename']}"),
         InstallOperation("configure", configure_note),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -8,8 +9,10 @@ from pathlib import Path
 
 import pytest
 
-HERMES_SOURCE = Path("/root/.hermes/hermes-agent")
-HERMES_PYTHON = HERMES_SOURCE / "venv/bin/python"
+HERMES_SOURCE = Path(os.getenv("HERMES_AGENT_ROOT", str(Path.home() / ".hermes" / "hermes-agent")))
+HERMES_PYTHON = HERMES_SOURCE / (
+    ".venv/bin/python" if (HERMES_SOURCE / ".venv/bin/python").exists() else "venv/bin/python"
+)
 HERMES_BIN = HERMES_SOURCE / "venv/bin/hermes"
 PLUGIN_SRC = Path(__file__).resolve().parents[1] / "plugin" / "model-providers" / "cursor"
 
@@ -24,7 +27,7 @@ def _deploy_plugin(home: Path) -> Path:
 
 
 def _run_hermes_python(script: str, *, home: Path, extra_env: dict[str, str] | None = None) -> dict:
-    env = {"HERMES_HOME": str(home), "PYTHONPATH": str(HERMES_SOURCE)}
+    env = {"HOME": str(home), "HERMES_HOME": str(home), "PYTHONPATH": str(HERMES_SOURCE)}
     if extra_env:
         env.update(extra_env)
     completed = subprocess.run(
