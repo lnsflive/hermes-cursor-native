@@ -1,17 +1,61 @@
+import json
+import subprocess
 from pathlib import Path
 from subprocess import CompletedProcess
 
 import pytest
 
+import hermes_cursor_native.cli as cli
+import hermes_cursor_native.verify as verify
 from hermes_cursor_native.discovery import Runtime
-from hermes_cursor_native.verify import collect_receipt
+from hermes_cursor_native.verify import _safe_auth_status, collect_receipt
+
+
+@pytest.mark.parametrize(
+    ("failure", "note"),
+    [
+        (OSError("launcher missing"), "auth_status_probe_failed"),
+        (subprocess.TimeoutExpired(cmd="hermes", timeout=60), "auth_status_probe_timed_out"),
+    ],
+)
+def test_safe_auth_status_converts_probe_failures(tmp_path, monkeypatch, failure, note):
+    hermes = tmp_path / "hermes"
+    hermes.touch()
+    home = tmp_path / "home"
+    home.mkdir()
+
+    def raise_failure(*args, **kwargs):
+        raise failure
+
+    monkeypatch.setattr(verify.subprocess, "run", raise_failure)
+    status, auth_note = _safe_auth_status(hermes, ["-p", "work"], tmp_path, home)
+    assert status == "unknown"
+    assert auth_note == note
+
+
+def test_status_survives_auth_probe_failure(tmp_path, monkeypatch, capsys):
+    home = tmp_path / "home"
+    home.mkdir()
+    runtime = Runtime("test", ("cli",), "linux", home, None, tmp_path / "hermes",
+                      "test", True, "active")
+
+    def raise_oserror(*args, **kwargs):
+        raise OSError("launcher missing")
+
+    monkeypatch.setattr(verify.subprocess, "run", raise_oserror)
+    monkeypatch.setattr(verify, "resolve_hermes_python", lambda _: None)
+    assert cli.main(["status", "--runtime", "test", "--json"],
+                    discover=lambda: [runtime]) == 0
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.err
+    receipt = json.loads(captured.out)
+    assert receipt["auth_status"] == "unknown"
+    assert "auth: auth_status_probe_failed" in receipt["notes"]
 
 
 @pytest.mark.parametrize("profile", ["default", "work"])
 @pytest.mark.parametrize("has_python", [False, True])
 def test_receipt_probes_selected_home_and_profile(tmp_path, monkeypatch, profile, has_python):
-    import hermes_cursor_native.verify as verify
-
     home = tmp_path / "selected"
     source = tmp_path / "source"
     source.mkdir()
@@ -60,8 +104,6 @@ def test_receipt_probes_selected_home_and_profile(tmp_path, monkeypatch, profile
 @pytest.mark.parametrize("profile", ["default", "work"])
 @pytest.mark.parametrize("layout", ["native", "legacy", "missing"])
 def test_receipt_detects_plugin_layout(tmp_path, monkeypatch, profile, layout):
-    import hermes_cursor_native.verify as verify
-
     home = tmp_path / "home"
     selected = home if profile == "default" else home / "profiles" / profile
     relative = "plugins/cursor" if layout == "native" else "plugins/model-providers/cursor"

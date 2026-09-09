@@ -52,17 +52,22 @@ def _hostname() -> str:
 def _safe_auth_status(
     hermes: Path, profile_args: list[str], cwd: Path, hermes_home: Path,
 ) -> tuple[str, str]:
-    completed = subprocess.run(
-        [str(hermes), *profile_args, "auth", "status", "cursor"],
-        cwd=cwd,
-        env={**os.environ, "HERMES_HOME": str(hermes_home)},
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=60,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            [str(hermes), *profile_args, "auth", "status", "cursor"],
+            cwd=cwd,
+            env={**os.environ, "HERMES_HOME": str(hermes_home)},
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60,
+            check=False,
+        )
+    except OSError:
+        return "unknown", "auth_status_probe_failed"
+    except subprocess.TimeoutExpired:
+        return "unknown", "auth_status_probe_timed_out"
     text = f"{completed.stdout}\n{completed.stderr}"
     for line in text.splitlines():
         match = _AUTH_LINE.match(line.strip())
