@@ -25,6 +25,14 @@ from .system_discovery import discover_system
 from .verify import collect_receipt
 
 
+def _require_local_runtime(runtime: Runtime, command: str) -> None:
+    if runtime.platform == "wsl" and os.name == "nt":
+        raise InstallerError(
+            f"Run {command} inside the selected WSL distribution ({runtime.runtime_id}); "
+            "Windows cannot execute this runtime directly."
+        )
+
+
 def _apply_home_override(runtime: Runtime, hermes_home: str | None) -> Runtime:
     if not hermes_home:
         return runtime
@@ -134,11 +142,7 @@ def main(
             ),
             getattr(args, "hermes_home", None),
         )
-        if runtime.platform == "wsl" and os.name == "nt":
-            raise InstallerError(
-                f"Run status inside the selected WSL distribution ({runtime.runtime_id}); "
-                "Windows cannot execute this runtime directly."
-            )
+        _require_local_runtime(runtime, "status")
         bridge_root = Path(runtime.home) / "cursor-sdk-bridge"
         expected = "cursor-sdk-bridge.exe" if runtime.platform == "windows" else "cursor-sdk-bridge"
         matches = [path for path in bridge_root.rglob(expected) if path.is_file()]
@@ -169,6 +173,7 @@ def main(
             ),
             getattr(args, "hermes_home", None),
         )
+        _require_local_runtime(runtime, "login")
         hermes = Path(runtime.executable)  # type: ignore[arg-type]
         source = Path(runtime.source_root) if runtime.source_root else Path(".")
         run_cursor_oauth(run_command, hermes, source, Path(runtime.home), package_data_root())

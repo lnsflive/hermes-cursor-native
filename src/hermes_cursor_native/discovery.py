@@ -107,24 +107,16 @@ class RuntimeDiscovery:
 
         runtimes: list[Runtime] = []
         for group in groups.values():
-            primary = group[0][0]
+            primary = next(
+                (candidate for candidate, _ in group if candidate.runtime_id == "explicit-home"),
+                group[0][0],
+            )
             selected, probe = next((pair for pair in group if pair[1].usable), group[0])
             surfaces = tuple(dict.fromkeys(candidate.surface for candidate, _ in group))
             active = any(candidate.active_hint for candidate, _ in group)
             source_root = probe.source_root or selected.source_root
             executable = probe.executable or selected.executable
             home = primary.home
-            for candidate, _probe in group:
-                candidate_home = Path(candidate.home)
-                if (candidate_home / "config.yaml").is_file():
-                    home = candidate.home
-                    break
-            if not (Path(home) / "config.yaml").is_file() and source_root is not None:
-                home = (
-                    source_root.parent
-                    if isinstance(source_root, Path)
-                    else Path(str(source_root)).parent
-                )
 
             if probe.usable and active:
                 status = "active"

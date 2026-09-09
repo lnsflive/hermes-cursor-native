@@ -224,3 +224,31 @@ def test_alias_collapse_retains_usable_probe(tmp_path, usable_first):
     assert runtime.source_root == root
     assert runtime.home == home
     assert set(runtime.surfaces) == {"explicit", "path"}
+
+
+@pytest.mark.parametrize("explicit_first", [True, False])
+@pytest.mark.parametrize("other_config", [True, False])
+def test_aliases_preserve_unconfigured_explicit_home(tmp_path, explicit_first, other_config):
+    home = tmp_path / "requested"
+    unrelated = tmp_path / ".hermes"
+    home.mkdir()
+    unrelated.mkdir()
+    if other_config:
+        (unrelated / "config.yaml").write_text("unrelated estate")
+    source = tmp_path / "shared-checkout"
+    explicit = Candidate("explicit-home", "cli", "linux", home, home / "hermes-agent",
+                         home / "hermes-agent/venv/bin/hermes", True)
+    path = Candidate("path-hermes", "path", "linux", unrelated, source,
+                     source / ".venv/bin/hermes")
+
+    def probe(candidate):
+        return ProbeResult(candidate == path, "test", source, candidate.executable)
+
+    candidates = [explicit, path] if explicit_first else [path, explicit]
+    runtime = select_runtime(RuntimeDiscovery(probe=probe).classify(candidates))
+    assert runtime.runtime_id == "explicit-home"
+    assert runtime.home == home
+    assert runtime.executable == path.executable
+    assert not (home / "config.yaml").exists()
+    if other_config:
+        assert (unrelated / "config.yaml").read_text() == "unrelated estate"
