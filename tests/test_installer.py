@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import os
 import tarfile
 from pathlib import Path
 from subprocess import CompletedProcess
@@ -337,6 +338,7 @@ def test_run_cursor_oauth_surfaces_genuine_login_failure(tmp_path):
         run_cursor_oauth(run, hermes, source, home, package)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX shell stub is not executable on Windows")
 def test_run_cursor_oauth_probes_before_interactive_login(tmp_path, monkeypatch):
     hermes = tmp_path / "hermes"
     hermes.write_text(
