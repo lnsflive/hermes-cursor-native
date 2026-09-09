@@ -205,7 +205,7 @@ def main(
             run_oauth=args.oauth,
         )
         if args.json:
-            print(plan.to_json())
+            print(plan.to_json(), file=sys.stdout if args.dry_run else sys.stderr)
         else:
             print(f"Install plan for {runtime.runtime_id} / profile {args.profile}")
             for index, operation in enumerate(plan.operations, 1):

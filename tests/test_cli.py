@@ -66,3 +66,30 @@ def test_windows_commands_reject_wsl_before_probing(tmp_path, monkeypatch, capsy
     error = capsys.readouterr().err
     assert f"Run {command} inside the selected WSL distribution (wsl:Ubuntu)" in error
     assert "Traceback" not in error
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_install_json_is_one_document(tmp_path, monkeypatch, capsys, dry_run):
+    from types import SimpleNamespace
+
+    runtime = Runtime("test", ("cli",), "linux", tmp_path, None,
+                      tmp_path / "hermes", "test", True, "active")
+    plan = SimpleNamespace(to_json=lambda: json.dumps({"plan": "ready"}))
+    calls = []
+
+    def execute(selected_plan, **kwargs):
+        calls.append(selected_plan)
+        return SimpleNamespace(receipt=SimpleNamespace(
+            to_json=lambda: json.dumps({"installed": True}),
+        ))
+
+    monkeypatch.setattr(cli, "build_install_plan", lambda **kwargs: plan)
+    monkeypatch.setattr(cli, "execute_install_plan", execute)
+    args = ["install", "--runtime", "test", "--yes", "--json"]
+    if dry_run:
+        args.append("--dry-run")
+    assert cli.main(args, discover=lambda: [runtime], manifest_loader=lambda _: None) == 0
+    assert json.loads(capsys.readouterr().out) == (
+        {"plan": "ready"} if dry_run else {"installed": True}
+    )
+    assert calls == ([] if dry_run else [plan])

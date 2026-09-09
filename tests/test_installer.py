@@ -196,6 +196,25 @@ def test_execute_install_plan_plugin_mode(
 
         monkeypatch.setattr(installer_mod.shutil, "copytree", failing_copy)
 
+    if failure == "bridge_backup":
+        original_mkdtemp = installer_mod.tempfile.mkdtemp
+
+        def fail_bridge_backup(*args, **kwargs):
+            if kwargs.get("prefix") == "bridge-":
+                raise OSError("injected bridge backup failure")
+            return original_mkdtemp(*args, **kwargs)
+
+        monkeypatch.setattr(installer_mod.tempfile, "mkdtemp", fail_bridge_backup)
+    if failure == "bridge_move":
+        original_rename = Path.rename
+
+        def fail_bridge_move(path, target):
+            if path == bridge_root:
+                raise OSError("injected bridge move failure")
+            return original_rename(path, target)
+
+        monkeypatch.setattr(Path, "rename", fail_bridge_move)
+
     def subprocess_run(args, *, cwd, env, **kwargs):
         assert env["HERMES_HOME"] == str(home)
         result = run(args, cwd)
@@ -217,6 +236,8 @@ def test_execute_install_plan_plugin_mode(
 
     if failure:
         expected = {
+            "bridge_backup": "injected bridge backup failure",
+            "bridge_move": "injected bridge move failure",
             "copy": "injected copy failure",
             "checksum": "SHA256 mismatch",
             "config": "injected config failure",
@@ -239,3 +260,11 @@ def test_execute_install_plan_plugin_mode(
         assert result.bridge_path.is_file()
         assert (result.plugin_path / "plugin.yaml").is_file()
         assert not (result.plugin_path / "old.py").exists()
+
+
+@pytest.mark.parametrize("failure", ["bridge_backup", "bridge_move"])
+def test_bridge_backup_failure_preserves_existing_install(tmp_path, monkeypatch, failure):
+    test_execute_install_plan_plugin_mode(
+        tmp_path, monkeypatch, existing=True, failure=failure,
+        native_runner=False, profile="default",
+    )

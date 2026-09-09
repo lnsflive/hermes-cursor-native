@@ -301,13 +301,11 @@ def execute_install_plan(
 
         payload = download(plan.artifact["url"])
         verify_sha256(payload, plan.artifact["sha256"])
-        bridge_mutated = True
         if bridge_root.exists():
             backup_root.mkdir(parents=True, exist_ok=True)
-            bridge_backup = backup_root / "bridge"
-            if bridge_backup.exists():
-                shutil.rmtree(bridge_backup)
-            shutil.move(str(bridge_root), str(bridge_backup))
+            bridge_backup = Path(tempfile.mkdtemp(prefix="bridge-", dir=backup_root)) / "bridge"
+            bridge_root.rename(bridge_backup)
+        bridge_mutated = True
         safe_extract_tar(payload, bridge_root)
         bridge = _find_bridge(bridge_root, plan.runtime.platform)
 

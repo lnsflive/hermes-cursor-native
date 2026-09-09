@@ -596,7 +596,9 @@ class ConnectJsonTransport:
         body = struct.pack(">BI", 0, len(payload)) + payload
         req = self._request(f"/sdk.v1.{service}/{method}", "application/connect+json", body)
         try:
-            reply = urllib.request.urlopen(req, timeout=read_timeout)
+            reply = urllib.request.urlopen(
+                req, timeout=_remaining_timeout(read_timeout, deadline, f"{service}/{method}")
+            )
         except urllib.error.HTTPError as err:
             self._raise_connect_error(err.read(), http_status=err.code)
             return  # unreachable; keeps type-checkers happy
@@ -607,9 +609,15 @@ class ConnectJsonTransport:
             while True:
                 if deadline is not None and time.monotonic() > deadline:
                     raise CursorBridgeError(f"{service}/{method}: stream deadline exceeded")
-                header = _read_exact(reply, 5, what=f"{service}/{method} frame header")
+                header = _read_exact(
+                    reply, 5, what=f"{service}/{method} frame header",
+                    read_timeout=read_timeout, deadline=deadline,
+                )
                 flags, length = struct.unpack(">BI", header)
-                frame = _read_exact(reply, length, what=f"{service}/{method} frame body")
+                frame = _read_exact(
+                    reply, length, what=f"{service}/{method} frame body",
+                    read_timeout=read_timeout, deadline=deadline,
+                )
                 if flags & 0x02:
                     end = json.loads(frame) if frame else {}
                     error = end.get("error") if isinstance(end, dict) else None
@@ -628,11 +636,28 @@ class ConnectJsonTransport:
                     yield message
 
 
-def _read_exact(stream: Any, count: int, *, what: str) -> bytes:
+def _remaining_timeout(read_timeout: float, deadline: float | None, what: str) -> float:
+    if deadline is None:
+        return read_timeout
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise CursorBridgeError(f"{what}: stream deadline exceeded")
+    return min(read_timeout, remaining)
+
+
+def _read_exact(
+    stream: Any, count: int, *, what: str,
+    read_timeout: float = 90.0, deadline: float | None = None,
+) -> bytes:
     chunks = b""
     while len(chunks) < count:
         try:
-            chunk = stream.read(count - len(chunks))
+            timeout = _remaining_timeout(read_timeout, deadline, what)
+            # urlopen returns HTTPResponse. read1 performs at most one underlying
+            # read, so partial frames cannot reset the same timeout indefinitely.
+            if stream.fp is not None:
+                stream.fp.raw._sock.settimeout(timeout)
+            chunk = stream.read1(count - len(chunks))
         except OSError as exc:
             raise CursorBridgeError(f"{what}: stream read failed: {exc}") from None
         if not chunk:
