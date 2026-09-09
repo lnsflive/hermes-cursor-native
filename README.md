@@ -120,28 +120,22 @@ hermes-cursor-native install --runtime windows-current --profile default --yes
 
 ## Verification
 
-A successful install checks:
+**Offline (install time):** capability probes and mocked client contracts in CI prove the plugin seam on stock Hermes — bridge SHA256, plugin registration, streaming/tool callback shape. These run without OAuth and without synthetic credentials in live paths.
 
-1. Cursor provider registration through successful chats
-2. bridge path and SHA256
-3. OAuth login completion
-4. Composer 2.5 response marker
-5. Grok 4.6 response marker
-6. automatic Cursor routing response marker
-7. Hermes-owned terminal tool execution using a hidden random file nonce
+**Live (required after OAuth):** per-estate receipts must include:
+
+1. `hermes auth status cursor` → logged in
+2. `hermes-cursor-native status --json` → model catalog count and runtime credential probe
+3. Successful `hermes chat --provider cursor` (short smoke prompt)
+4. Hermes-owned tool execution in loop mode (terminal or equivalent)
+
+Registration or offline probes alone are not completion. See [Architecture](docs/architecture.md#end-to-end-verification-post-oauth-required) and [INSTALL_AGENT.md](INSTALL_AGENT.md).
 
 ## Update model
 
-Alpha patch mode keeps Cursor commits on `cursor-provider-deployed` and configures:
+Re-run `install` after updating this repository to refresh the plugin and bridge under `$HERMES_HOME`. Stock Hermes updates (`hermes update`) do not remove the plugin; re-verify with `status` after major Hermes upgrades.
 
-```yaml
-updates:
-  parked_branch_strategy: update_in_place
-```
-
-Upstream merges preserve the provider when clean. Conflicts stop for reconciliation. Do not use `hermes update --switch-branch` on a patched installation.
-
-The long-term target is a stock-Hermes provider service that requires no core patch. See [Architecture](docs/architecture.md).
+Historical patch-based installs are documented under `patches/hermes/` for reference only. Current installs are plugin-only. See [Architecture](docs/architecture.md).
 
 ## Provenance
 

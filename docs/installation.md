@@ -1,6 +1,12 @@
 # Installation
 
-> Alpha: only Hermes 0.20.5 at the manifest base commit is accepted for a fresh patch install.
+> **Plugin-only:** installs into `$HERMES_HOME` on stock Hermes. No core patches, no version-pinned base commit, no Git branch mutation. Run `discover` and `install --dry-run` before applying.
+
+## Requirements
+
+- Stock Hermes Agent with a runnable executable and source checkout (tested on 0.21.1).
+- Behavioral capability probes must pass for the selected runtime (see [Architecture](architecture.md)).
+- User approval for the exact runtime, profile, and `$HERMES_HOME` (use `--hermes-home` for non-default estates).
 
 ## Windows
 
@@ -27,8 +33,6 @@ Verified native macOS CLI defaults are:
 ~/.hermes/.env
 ```
 
-Hermes Desktop was not installed on the verification host, so this alpha does not claim a verified macOS Desktop application layout. The installer targets the Hermes backend checkout, not an application bundle.
-
 The POSIX bootstrap prefers `uv`. If macOS only exposes the system Python 3.9, it can use Python 3.11+ from an existing git-installed Hermes runtime and creates a separate management virtual environment under `~/.local/share/hermes-cursor-native/venv`; it does not install this package into Hermes's own venv.
 
 ## Alternate pinned release
@@ -46,10 +50,18 @@ HCN_REF=v0.1.0-alpha.1 curl -fsSL https://raw.githubusercontent.com/lnsflive/her
 
 ```text
 hermes-cursor-native discover
+hermes-cursor-native discover --json
 hermes-cursor-native install --dry-run --runtime <id> --profile default
 ```
 
-Review source root, executable, home, version, branch, artifact, patch series, OAuth, and verification operations.
+Review source root, executable, home, version, bridge artifact, capability probe results, OAuth step, and verification operations. For additional user homes on a shared host:
+
+```text
+hermes-cursor-native install --dry-run --runtime path-hermes \
+  --hermes-home /home/<user>/.hermes --profile default
+```
+
+Run the install command **as the intended OS user** so plugin and bridge ownership match the estate.
 
 ## Apply
 
@@ -65,16 +77,32 @@ Agent/automation after explicit approval:
 hermes-cursor-native install --runtime <id> --profile default --yes
 ```
 
+OAuth is skipped by default. After install, the user completes browser login:
+
+```text
+hermes-cursor-native login --runtime <id> --hermes-home <path>
+```
+
+Or pass `--oauth` during install to launch login immediately.
+
 ## Agent installation
 
 Point an agent to [`INSTALL_AGENT.md`](../INSTALL_AGENT.md). It must show discovery and dry-run output before asking for approval.
 
 ## Profiles
 
-The installer configures only the explicitly targeted profile and stores an absolute bridge path in that profile's config. It does not create profiles, bots, or gateway connections. Use `--profile <existing-name>` for an existing Hermes profile; create or connect bots separately with normal Hermes profile and gateway commands.
+The installer configures only the explicitly targeted profile and stores an absolute bridge path in that profile's config. It does not create profiles, bots, or gateway connections.
 
-Cursor SDK OAuth is intentionally scoped to the operating-system user rather than a Hermes profile. Named profiles keep separate Hermes configuration, memory, sessions, and gateway state while sharing that user's Cursor SDK login. OAuth stores are never copied across users, Windows, WSL, macOS, or remote hosts.
+Cursor SDK OAuth is scoped to the operating-system user. Named profiles keep separate Hermes configuration while sharing that user's Cursor SDK login. OAuth stores are never copied across users, Windows, WSL, macOS, or remote hosts.
+
+## Post-install verification
+
+```text
+hermes-cursor-native status --runtime <id> --hermes-home <path> --json
+```
+
+Offline contract checks pass at install time. **Live** auth, model catalog, chat, and Hermes-owned tool execution require completed OAuth — see [Architecture](architecture.md#end-to-end-verification-post-oauth-required).
 
 ## Uninstall and rollback
 
-The alpha records a Git backup branch and profile config backup. Automated `uninstall` is planned before stable release; until then follow [Update survival and rollback](update-survival.md).
+Config backups are stored under `<HERMES_HOME>/cursor-native/backups/<timestamp>/`. Remove the plugin directory and bridge tree to uninstall. Automated `uninstall` is planned before stable release.

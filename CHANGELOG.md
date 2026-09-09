@@ -11,7 +11,9 @@ All notable changes are documented here. The project follows Semantic Versioning
 - Versioned install planning and dry-run output.
 - Verified Cursor SDK bridge artifact manifest.
 - Safe tar extraction and checksum enforcement.
-- Maintained patch-series executor with OAuth/config/smoke workflow.
+- Plugin-only installer with behavioral capability probes on stock Hermes (no core patches).
+- Auth shim for browser OAuth via stock Hermes credential resolution.
+- Live verification receipts via `status` (auth, catalog, runtime probe); E2E chat/tool after OAuth.
 - Bridge hardening: required checksums, isolated credentials, callback body limits, and active-run tool allowlists.
 - PowerShell and POSIX one-command bootstraps.
 - Agent-readable installation contract and skill.
