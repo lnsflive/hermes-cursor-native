@@ -104,7 +104,10 @@ try:
         raise SystemExit(0)
     profile = providers_mod.get_provider_profile("cursor")
     models = profile.fetch_models() if profile else None
-    print(json.dumps({"count": len(models or []), "source": source}))
+    if models is None:
+        print(json.dumps({"count": None, "source": source, "error": "catalog_fetch_failed"}))
+        raise SystemExit(0)
+    print(json.dumps({"count": len(models), "source": source}))
 except Exception as exc:
     print(json.dumps({"count": None, "error": type(exc).__name__}))
 """

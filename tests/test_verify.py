@@ -136,6 +136,28 @@ def test_status_survives_python_probe_failures(tmp_path, monkeypatch, capsys):
     assert receipt["chat_probe"] == "runtime_probe_failed"
 
 
+def test_receipt_reports_catalog_fetch_failure(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    source = tmp_path / "source"
+    source.mkdir()
+    python = source / "python"
+    python.touch()
+    runtime = Runtime("test", ("cli",), "linux", home, source, source / "hermes",
+                      "test", True, "active")
+
+    def subprocess_run(args, **kwargs):
+        if args[-3:] == ["auth", "status", "cursor"]:
+            return CompletedProcess(args, 0, "cursor: logged in", "")
+        return CompletedProcess(args, 0, '{"count": null, "error": "catalog_fetch_failed"}', "")
+
+    monkeypatch.setattr(verify.subprocess, "run", subprocess_run)
+    monkeypatch.setattr(verify, "resolve_hermes_python", lambda _: python)
+    monkeypatch.setattr(verify, "run_contract_checks", lambda *args: {"client_contract": True})
+    receipt = collect_receipt(runtime, bridge_path=None)
+    assert receipt.model_catalog_count is None
+    assert receipt.model_catalog_error == "catalog_fetch_failed"
+
+
 def test_receipt_contract_probe_converts_launch_failures(tmp_path, monkeypatch):
     import hermes_cursor_native.capabilities as capabilities
 

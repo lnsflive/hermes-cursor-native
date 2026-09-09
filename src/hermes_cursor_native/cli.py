@@ -33,10 +33,16 @@ def _require_local_runtime(runtime: Runtime, command: str) -> None:
         )
 
 
+def _resolved_home(path: Path | str) -> Path:
+    resolved = Path(path).expanduser()
+    if not resolved.is_absolute():
+        resolved = resolved.resolve()
+    return resolved
+
+
 def _apply_home_override(runtime: Runtime, hermes_home: str | None) -> Runtime:
-    if not hermes_home:
-        return runtime
-    return replace(runtime, home=Path(hermes_home).expanduser().resolve())
+    home = _resolved_home(hermes_home) if hermes_home else _resolved_home(runtime.home)
+    return replace(runtime, home=home)
 
 
 def _runtime_dict(runtime: Runtime) -> dict[str, object]:

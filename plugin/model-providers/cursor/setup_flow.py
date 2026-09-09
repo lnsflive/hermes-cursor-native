@@ -4,15 +4,32 @@ from __future__ import annotations
 
 
 def _login_cursor_oauth(*_args, force_new_login: bool = False, **_kwargs) -> None:
-    from .cursor_sdk_auth import clear_sdk_credentials, login
+    from .cursor_sdk_auth import (
+        clear_sdk_credentials,
+        login,
+        read_sdk_credentials,
+        save_sdk_credentials,
+    )
 
-    if force_new_login:
-        clear_sdk_credentials()
+    backup = read_sdk_credentials() if force_new_login else None
 
     def on_url(url: str) -> None:
         print(f"Open this URL to log in to Cursor:\n{url}")
 
-    login(on_login_url=on_url, on_status=print)
+    if force_new_login:
+        clear_sdk_credentials()
+    try:
+        login(on_login_url=on_url, on_status=print)
+    except Exception:
+        if backup is not None:
+            expires = backup.get("apiKeyExpiresAtMs")
+            save_sdk_credentials(
+                backend_url=str(backup.get("backendUrl") or ""),
+                api_key=str(backup["apiKey"]),
+                api_key_expires_at_ms=int(expires) if isinstance(expires, (int, float)) else None,
+                email=str(backup.get("email") or ""),
+            )
+        raise
 
 
 def _cursor_logged_in() -> bool:
