@@ -107,11 +107,12 @@ class RuntimeDiscovery:
 
         runtimes: list[Runtime] = []
         for group in groups.values():
-            primary, probe = group[0]
+            primary = group[0][0]
+            selected, probe = next((pair for pair in group if pair[1].usable), group[0])
             surfaces = tuple(dict.fromkeys(candidate.surface for candidate, _ in group))
             active = any(candidate.active_hint for candidate, _ in group)
-            source_root = probe.source_root or primary.source_root
-            executable = probe.executable or primary.executable
+            source_root = probe.source_root or selected.source_root
+            executable = probe.executable or selected.executable
             home = primary.home
             for candidate, _probe in group:
                 candidate_home = Path(candidate.home)

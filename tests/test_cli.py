@@ -42,3 +42,22 @@ def test_status_reports_incomplete_bridge(tmp_path, monkeypatch, capsys, count):
     if count != 1:
         assert receipt["bridge_path"] == ""
         assert f"bridge: expected one launcher, found {count}" in receipt["notes"]
+
+
+def test_windows_status_rejects_wsl_before_probing(tmp_path, monkeypatch, capsys):
+    from types import SimpleNamespace
+
+    runtime = Runtime("wsl:Ubuntu", ("cli",), "wsl", tmp_path, None,
+                      tmp_path / "hermes", "test", True, "active")
+    monkeypatch.setattr(cli, "os", SimpleNamespace(name="nt"))
+
+    def unexpected_probe(*args, **kwargs):
+        pytest.fail("Windows must not invoke a POSIX runtime")
+
+    monkeypatch.setattr(cli, "collect_receipt", unexpected_probe)
+    original_main = cli.main
+    monkeypatch.setattr(cli, "main", lambda argv: original_main(argv, discover=lambda: [runtime]))
+    assert cli.entrypoint(["status", "--runtime", "wsl:Ubuntu", "--json"]) == 2
+    error = capsys.readouterr().err
+    assert "Run status inside the selected WSL distribution (wsl:Ubuntu)" in error
+    assert "Traceback" not in error

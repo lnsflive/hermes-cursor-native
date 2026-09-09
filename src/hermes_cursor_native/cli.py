@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, replace
@@ -133,6 +134,11 @@ def main(
             ),
             getattr(args, "hermes_home", None),
         )
+        if runtime.platform == "wsl" and os.name == "nt":
+            raise InstallerError(
+                f"Run status inside the selected WSL distribution ({runtime.runtime_id}); "
+                "Windows cannot execute this runtime directly."
+            )
         bridge_root = Path(runtime.home) / "cursor-sdk-bridge"
         expected = "cursor-sdk-bridge.exe" if runtime.platform == "windows" else "cursor-sdk-bridge"
         matches = [path for path in bridge_root.rglob(expected) if path.is_file()]

@@ -197,3 +197,30 @@ def test_select_runtime_rejects_unknown_runtime(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeNotFoundError):
         select_runtime(runtimes, requested="does-not-exist")
+
+
+@pytest.mark.parametrize("usable_first", [False, True])
+def test_alias_collapse_retains_usable_probe(tmp_path, usable_first):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "config.yaml").touch()
+    root = tmp_path / "source"
+    broken = Candidate("explicit-home", "explicit", "linux", home, root,
+                       root / "venv/bin/hermes", True)
+    working = Candidate("path-hermes", "path", "linux", home, None,
+                        root / ".venv/bin/hermes")
+    candidates = [working, broken] if usable_first else [broken, working]
+
+    def probe(candidate):
+        return ProbeResult(candidate == working, "working" if candidate == working else "",
+                           root, candidate.executable)
+
+    runtimes = RuntimeDiscovery(probe=probe).classify(candidates)
+    assert len(runtimes) == 1
+    runtime = select_runtime(runtimes)
+    assert runtime.usable and runtime.status == "active"
+    assert runtime.version == "working"
+    assert runtime.executable == working.executable
+    assert runtime.source_root == root
+    assert runtime.home == home
+    assert set(runtime.surfaces) == {"explicit", "path"}
