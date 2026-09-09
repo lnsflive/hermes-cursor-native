@@ -287,7 +287,6 @@ def download_bridge(version: str = "", *, progress: bool = True) -> str:
     os_name, arch = bridge_platform()
     archive_name = f"cursor-sdk-bridge-standalone-{os_name}-{arch}.tar.gz"
     dest_root = bridge_install_dir()
-    dest_root.mkdir(parents=True, exist_ok=True)
 
     if progress:
         print(f"  Downloading Cursor SDK bridge {version} ({os_name}/{arch})...")
@@ -313,43 +312,64 @@ def download_bridge(version: str = "", *, progress: bool = True) -> str:
     except (urllib.error.URLError, OSError) as exc:
         raise CursorBridgeError(f"bridge download failed: {github_url}: {exc}") from exc
 
-    with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as tmp:
-        tmp.write(data)
-        archive_path = tmp.name
+    # Keep incomplete archives out of the managed path, including on interruption.
+    dest_root.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".cursor-bridge-stage-", dir=dest_root.parent) as tmp:
+        staging = Path(tmp)
+        archive_path = staging / "bridge.tar.gz"
+        archive_path.write_bytes(data)
+        extracted = staging / "extracted"
+        extracted.mkdir()
+        try:
+            with tarfile.open(archive_path, "r:gz") as tar:
+                tar.extractall(extracted, filter="data")
+        except (tarfile.TarError, OSError) as exc:
+            raise CursorBridgeError(f"bridge archive extraction failed: {exc}") from exc
 
-    try:
-        with tarfile.open(archive_path, "r:gz") as tar:
-            # The archive unpacks to a single `cursor-sdk-bridge/` directory.
-            tar.extractall(dest_root, filter="data")
-    except (tarfile.TarError, OSError) as exc:
-        raise CursorBridgeError(f"bridge archive extraction failed: {exc}") from exc
-    finally:
-        with contextlib.suppress(OSError):
-            os.unlink(archive_path)
+        # Standalone releases are flat; packaged mirrors have a nested root.
+        bridge_root = None
+        for candidate in (extracted, extracted / "cursor-sdk-bridge"):
+            if (candidate / "manifest.json").is_file():
+                bridge_root = candidate
+                break
+        if bridge_root is None:
+            raise CursorBridgeError("bridge manifest not found in downloaded archive")
+        try:
+            manifest = json.loads((bridge_root / "manifest.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise CursorBridgeError(f"bridge manifest unreadable: {exc}") from exc
+        if not isinstance(manifest, dict) or manifest.get("protocol") != "sdk.v1":
+            raise CursorBridgeError("bridge manifest must declare protocol 'sdk.v1'")
 
-    # The GitHub standalone archive is flat (bin/, manifest.json, proto/);
-    # the packaged mirror archive nests everything under cursor-sdk-bridge/.
-    bridge_root = None
-    for candidate in (dest_root, dest_root / "cursor-sdk-bridge"):
-        if (candidate / "manifest.json").exists():
-            bridge_root = candidate
-            break
-    if bridge_root is None:
-        raise CursorBridgeError(f"bridge manifest not found under {dest_root} after install")
-    try:
-        manifest = json.loads((bridge_root / "manifest.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        raise CursorBridgeError(f"bridge manifest unreadable after install: {exc}") from exc
-    if manifest.get("protocol") != "sdk.v1":
-        raise CursorBridgeError(
-            f"installed bridge speaks protocol {manifest.get('protocol')!r}, expected 'sdk.v1'"
-        )
+        launcher = bridge_root / "bin" / _launcher_name()
+        if not launcher.is_file():
+            raise CursorBridgeError(f"bridge launcher missing in archive: {launcher}")
+        if os.name != "nt":
+            launcher.chmod(launcher.stat().st_mode | 0o755)
+        relative_launcher = launcher.relative_to(extracted)
 
-    launcher = bridge_root / "bin" / _launcher_name()
-    if not launcher.exists():
-        raise CursorBridgeError(f"bridge launcher missing after install: {launcher}")
-    if os.name != "nt":
-        launcher.chmod(launcher.stat().st_mode | 0o755)
+        backup_dir = None
+        backup = None
+        try:
+            if dest_root.exists() or dest_root.is_symlink():
+                backup_dir = Path(tempfile.mkdtemp(
+                    prefix=".cursor-bridge-backup-", dir=dest_root.parent,
+                ))
+                backup = backup_dir / "previous"
+                dest_root.rename(backup)
+            extracted.rename(dest_root)
+        except BaseException:
+            if backup is not None and (backup.exists() or backup.is_symlink()):
+                # Retain the backup if restoration itself fails, for recovery.
+                backup.rename(dest_root)
+            if backup_dir is not None:
+                shutil.rmtree(backup_dir)
+            raise
+        else:
+            if backup_dir is not None:
+                shutil.rmtree(backup_dir)
+
+    launcher = dest_root / relative_launcher
     if progress:
         print(f"  ✓ Installed Cursor SDK bridge → {launcher}")
     return str(launcher)

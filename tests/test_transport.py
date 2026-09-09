@@ -162,3 +162,82 @@ def test_unary_success_and_connect_error(transport, bridge_server):
         client.unary("Agent", "Create", {}, timeout=2)
     with pytest.raises(transport.CursorBridgeError, match="HTTP 400 connect error"):
         list(client.server_stream("Agent", "Run", {}, deadline=time.monotonic() + 2))
+
+
+@pytest.mark.parametrize("existing", [False, True])
+@pytest.mark.parametrize("failure", [None, "extract", "interrupt", "manifest", "protocol",
+                                     "launcher", "publish", "backup"])
+def test_download_publishes_only_valid_complete_tree(
+    transport, monkeypatch, tmp_path, existing, failure, nested=False,
+):
+    import hashlib
+    import io
+    import tarfile
+
+    dest = tmp_path / "cursor-sdk-bridge"
+    if existing:
+        (dest / "bin").mkdir(parents=True)
+        (dest / "bin" / transport._launcher_name()).write_bytes(b"previous launcher")
+        (dest / "manifest.json").write_bytes(b"previous manifest")
+    before = {str(p.relative_to(dest)): p.read_bytes() for p in dest.rglob("*") if p.is_file()}
+    monkeypatch.setattr(transport, "bridge_install_dir", lambda: dest)
+    payload = io.BytesIO()
+    files = {"manifest.json": json.dumps({"protocol": "sdk.v1"}).encode(),
+             "bin/" + transport._launcher_name(): b"new launcher", "support.dat": b"support"}
+    if failure == "manifest":
+        files.pop("manifest.json")
+    if failure == "protocol":
+        files["manifest.json"] = b"[]"
+    if failure == "launcher":
+        files.pop("bin/" + transport._launcher_name())
+    with tarfile.open(fileobj=payload, mode="w:gz") as tar:
+        for name, content in files.items():
+            info = tarfile.TarInfo(("cursor-sdk-bridge/" if nested else "") + name)
+            info.size = len(content)
+            tar.addfile(info, io.BytesIO(content))
+    data = payload.getvalue()
+    monkeypatch.setattr(transport, "_fetch_url", lambda _: data)
+    monkeypatch.setattr(transport, "_expected_archive_sha256",
+                        lambda *_: hashlib.sha256(data).hexdigest())
+    original_extract = tarfile.TarFile.extractall
+
+    def extract(archive, path, **kwargs):
+        original_extract(archive, path, **kwargs)
+        assert {str(p.relative_to(dest)): p.read_bytes()
+                for p in dest.rglob("*") if p.is_file()} == before
+        if failure == "extract":
+            raise OSError("injected extraction failure")
+        if failure == "interrupt":
+            raise KeyboardInterrupt("injected interruption")
+
+    monkeypatch.setattr(tarfile.TarFile, "extractall", extract)
+    original_rename = Path.rename
+
+    def rename(path, target):
+        if failure == "publish" and path.name == "extracted":
+            raise OSError("injected publication failure")
+        if failure == "backup" and path == dest:
+            raise OSError("injected backup failure")
+        return original_rename(path, target)
+
+    monkeypatch.setattr(Path, "rename", rename)
+    if failure is not None and (failure != "backup" or existing):
+        with pytest.raises((transport.CursorBridgeError, OSError, KeyboardInterrupt)):
+            transport.download_bridge(progress=False)
+        assert {str(p.relative_to(dest)): p.read_bytes()
+                for p in dest.rglob("*") if p.is_file()} == before
+        assert dest.exists() is existing
+    else:
+        launcher = Path(transport.download_bridge(progress=False))
+        assert launcher.read_bytes() == b"new launcher"
+        root = dest / "cursor-sdk-bridge" if nested else dest
+        assert (root / "support.dat").read_bytes() == b"support"
+        assert json.loads((root / "manifest.json").read_text()) == {"protocol": "sdk.v1"}
+    assert not list(tmp_path.glob(".cursor-bridge-*"))
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_download_nested_archive(transport, monkeypatch, tmp_path, existing):
+    test_download_publishes_only_valid_complete_tree(
+        transport, monkeypatch, tmp_path, existing, failure=None, nested=True,
+    )
