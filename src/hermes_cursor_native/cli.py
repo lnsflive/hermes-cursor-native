@@ -22,7 +22,7 @@ from .manifest import InstallManifest, default_manifest_path, load_manifest, pac
 from .preflight import detect_architecture
 from .rendering import render_runtime_table
 from .system_discovery import discover_system
-from .verify import collect_receipt
+from .verify import collect_receipt, resolve_status_bridge
 
 
 def _require_local_runtime(runtime: Runtime, command: str) -> None:
@@ -143,20 +143,7 @@ def main(
             getattr(args, "hermes_home", None),
         )
         _require_local_runtime(runtime, "status")
-        bridge_root = Path(runtime.home) / "cursor-sdk-bridge"
-        if args.profile != "default":
-            profile_bridge = Path(runtime.home) / "profiles" / args.profile / "cursor-sdk-bridge"
-            # Native setup installs inside the profile; the management installer
-            # shares a bridge at the estate root. Do not hide a partial profile
-            # installation by reporting an unrelated root launcher as healthy.
-            if profile_bridge.exists():
-                bridge_root = profile_bridge
-        expected = "cursor-sdk-bridge.exe" if runtime.platform == "windows" else "cursor-sdk-bridge"
-        matches = [path for path in bridge_root.rglob(expected) if path.is_file()]
-        bridge = matches[0] if len(matches) == 1 else None
-        notes = () if bridge is not None else (
-            f"bridge: expected one launcher, found {len(matches)}",
-        )
+        bridge, notes = resolve_status_bridge(runtime, args.profile)
         receipt = collect_receipt(runtime, bridge_path=bridge, profile=args.profile, notes=notes)
         if args.json:
             print(receipt.to_json())

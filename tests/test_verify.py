@@ -55,3 +55,25 @@ def test_receipt_probes_selected_home_and_profile(tmp_path, monkeypatch, profile
         assert len(observed) == 1
     import os
     assert os.environ["HERMES_HOME"] == str(ambient)
+
+
+@pytest.mark.parametrize("profile", ["default", "work"])
+@pytest.mark.parametrize("layout", ["native", "legacy", "missing"])
+def test_receipt_detects_plugin_layout(tmp_path, monkeypatch, profile, layout):
+    import hermes_cursor_native.verify as verify
+
+    home = tmp_path / "home"
+    selected = home if profile == "default" else home / "profiles" / profile
+    relative = "plugins/cursor" if layout == "native" else "plugins/model-providers/cursor"
+    plugin = selected / relative
+    if layout != "missing":
+        plugin.mkdir(parents=True)
+    # An unrelated profile must not make a missing selected installation healthy.
+    (home / "profiles/other/plugins/cursor").mkdir(parents=True)
+    runtime = Runtime("test", ("cli",), "linux", home, None, tmp_path / "hermes",
+                      "test", True, "active")
+    monkeypatch.setattr(verify, "resolve_hermes_python", lambda _: None)
+    monkeypatch.setattr(verify, "_safe_auth_status", lambda *args: ("logged out", ""))
+    receipt = collect_receipt(runtime, bridge_path=None, profile=profile)
+    assert receipt.plugin_installed is (layout != "missing")
+    assert receipt.plugin_path == str(plugin)

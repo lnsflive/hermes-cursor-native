@@ -40,3 +40,58 @@ print(json.dumps({"registered": profile is not None,
     )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == {"registered": True, "visible": True, "oauth_flow": True}
+
+
+@pytest.mark.skipif(not PYTHON.exists(), reason="Hermes integration runtime not available")
+@pytest.mark.parametrize("profile", ["default", "work"])
+@pytest.mark.parametrize("mode", ["configured", "env", "path", "wheel", "managed", "absent"])
+def test_status_uses_native_resolver(tmp_path, monkeypatch, profile, mode):
+    import hermes_cursor_native.verify as verify
+    from hermes_cursor_native.discovery import Runtime
+
+    home = tmp_path / "home"
+    selected = home if profile == "default" else home / "profiles" / profile
+    destination = selected / "plugins/cursor"
+    destination.mkdir(parents=True)
+    for name in ("__init__.py", "plugin.yaml"):
+        shutil.copyfile(REPO / name, destination / name)
+    shutil.copytree(REPO / "plugin", destination / "plugin")
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "unrelated"))
+    monkeypatch.delenv("CURSOR_SDK_BRIDGE_BIN", raising=False)
+    monkeypatch.setenv("PATH", str(tmp_path / "path"))
+    name = "cursor-sdk-bridge.exe" if os.name == "nt" else "cursor-sdk-bridge"
+    launcher = tmp_path / "external" / name
+    if mode == "managed":
+        launcher = selected / "cursor-sdk-bridge/bin" / name
+    elif mode == "path":
+        launcher = tmp_path / "path" / name
+    elif mode == "wheel":
+        launcher = tmp_path / "wheels/cursor_sdk/bridge/bin" / name
+    if mode != "absent":
+        launcher.parent.mkdir(parents=True)
+        launcher.write_text("#!/bin/sh\nexit 99\n")
+        launcher.chmod(0o755)
+    if mode == "configured":
+        (selected / "config.yaml").write_text(
+            "cursor_bridge:\n  command: " + json.dumps(str(launcher)) + "\n"
+        )
+    if mode == "env":
+        monkeypatch.setenv("CURSOR_SDK_BRIDGE_BIN", str(launcher))
+    # Isolate optional SDK wheel discovery from whatever is installed on the host.
+    wheel = tmp_path / "wheels/cursor_sdk"
+    wheel.mkdir(parents=True, exist_ok=True)
+    (wheel / "__init__.py").touch()
+    real_run = subprocess.run
+
+    def run(args, **kwargs):
+        assert kwargs["env"]["HERMES_HOME"] == str(selected)
+        script = "import sys; sys.path.insert(0, " + repr(str(wheel.parent)) + ");\n" + args[2]
+        return real_run([args[0], args[1], script], **kwargs)
+
+    monkeypatch.setattr(verify.subprocess, "run", run)
+    monkeypatch.setattr(verify, "resolve_hermes_python", lambda _: PYTHON)
+    runtime = Runtime("test", ("cli",), "linux", home, HERMES, PYTHON.parent / "hermes",
+                      "test", True, "active")
+    bridge, notes = verify.resolve_status_bridge(runtime, profile)
+    assert bridge == (None if mode == "absent" else launcher.resolve()), notes
+    assert notes == (("bridge resolver found no launcher",) if mode == "absent" else ())

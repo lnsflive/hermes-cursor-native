@@ -210,6 +210,59 @@ def run_contract_checks(
     }
 
 
+def resolve_status_bridge(runtime: Runtime, profile: str) -> tuple[Path | None, tuple[str, ...]]:
+    """Use the selected runtime's installed provider resolver without starting a bridge."""
+    home = Path(runtime.home)
+    selected_home = home if profile == "default" else home / "profiles" / profile
+    python = resolve_hermes_python(runtime)
+    source = Path(runtime.source_root) if runtime.source_root else None
+    note = "bridge resolver unavailable: selected Hermes Python missing"
+    if python is not None and source is not None and source.is_dir():
+        script = """
+import importlib
+import json
+import shutil
+from pathlib import Path
+import providers
+providers._discover_providers()
+profile = providers.get_provider_profile("cursor")
+if profile is None:
+    raise RuntimeError("Cursor provider not registered")
+package = profile.__class__.__module__
+client = importlib.import_module(package + ".cursor_bridge_client")
+transport = importlib.import_module(package + ".cursor_bridge_transport")
+command = transport.resolve_bridge_command(client.load_bridge_settings()["command"])
+path = Path(shutil.which(command) or command).resolve() if command else None
+print(json.dumps({"bridge": str(path) if path and path.is_file() else None}))
+"""
+        try:
+            result = subprocess.run(
+                [str(python), "-c", script], cwd=source,
+                env={**os.environ, "HERMES_HOME": str(selected_home), "PYTHONPATH": str(source)},
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=30, check=False,
+            )
+            if result.returncode == 0:
+                payload = json.loads(result.stdout.strip())
+                bridge = payload["bridge"]
+                if bridge:
+                    return Path(bridge), ()
+                return None, ("bridge resolver found no launcher",)
+            note = "bridge resolver unavailable: provider probe failed"
+        except (OSError, subprocess.TimeoutExpired, ValueError, KeyError, TypeError):
+            note = "bridge resolver unavailable: provider probe failed"
+    # A partial runtime can still report managed files, but cannot resolve
+    # wheel/config/PATH precedence. Keep that limitation visible in the receipt.
+    bridge_root = selected_home / "cursor-sdk-bridge"
+    if profile != "default" and not bridge_root.exists():
+        bridge_root = home / "cursor-sdk-bridge"
+    expected = "cursor-sdk-bridge.exe" if runtime.platform == "windows" else "cursor-sdk-bridge"
+    matches = [path for path in bridge_root.rglob(expected) if path.is_file()]
+    if len(matches) == 1:
+        return matches[0], (note,)
+    return None, (note, f"bridge: expected one launcher, found {len(matches)}")
+
+
 def collect_receipt(
     runtime: Runtime,
     *,
@@ -219,7 +272,9 @@ def collect_receipt(
 ) -> InstallReceipt:
     hermes_home = Path(runtime.home)
     probe_home = hermes_home if profile == "default" else hermes_home / "profiles" / profile
-    plugin_path = probe_home / "plugins" / "model-providers" / "cursor"
+    legacy_plugin = probe_home / "plugins" / "model-providers" / "cursor"
+    native_plugin = probe_home / "plugins" / "cursor"
+    plugin_path = native_plugin if native_plugin.is_dir() else legacy_plugin
     hermes = Path(runtime.executable)  # type: ignore[arg-type]
     source_root = Path(runtime.source_root) if runtime.source_root else Path(".")
     profile_args = ["-p", profile]
