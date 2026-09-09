@@ -7,6 +7,7 @@ import hmac
 import io
 import os
 import secrets
+import sys
 import shutil
 import subprocess
 import tarfile
@@ -213,6 +214,44 @@ def _tool_nonce() -> str:
     return secrets.token_hex(16)
 
 
+def _run_cursor_oauth(
+    run: CommandRunner,
+    hermes: Path,
+    source: Path,
+    hermes_home: Path,
+    package_root: Path,
+) -> None:
+    """Launch browser OAuth via core CLI when present, else the plugin auth script."""
+    result = run([str(hermes), "cursor", "login"], source, True)
+    if result.returncode == 0:
+        return
+    auth_script = (
+        hermes_home / "plugins" / "model-providers" / "cursor" / "cursor_sdk_auth.py"
+    )
+    if not auth_script.is_file():
+        auth_script = package_root / "plugin" / "model-providers" / "cursor" / "cursor_sdk_auth.py"
+    if not auth_script.is_file():
+        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+        raise InstallerError(
+            "Cursor OAuth failed: `hermes cursor login` is unavailable and the plugin "
+            f"auth script is missing ({detail})"
+        )
+    _checked(run, [sys.executable, str(auth_script)], source, True)
+
+
+def deploy_plugin(package_root: Path, hermes_home: Path) -> Path:
+    """Copy the bundled Cursor model-provider plugin into the user's Hermes home."""
+    source = package_root / "plugin" / "model-providers" / "cursor"
+    if not source.is_dir():
+        raise InstallerError(f"Plugin source is missing: {source}")
+    destination = hermes_home / "plugins" / "model-providers" / "cursor"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists():
+        shutil.rmtree(destination)
+    shutil.copytree(source, destination)
+    return destination
+
+
 def execute_install_plan(
     plan: InstallPlan,
     *,
@@ -238,31 +277,36 @@ def execute_install_plan(
         raise UnsupportedRuntimeApplyError(
             "Run hermes-cursor-native install inside WSL; Windows will not mutate Linux state"
         )
-    source = Path(plan.runtime.source_root)  # type: ignore[arg-type]
     hermes = Path(plan.runtime.executable)  # type: ignore[arg-type]
-    if not source.is_dir() or not hermes.is_file():
-        raise InstallerError("Approved Hermes source or executable no longer exists")
+    if not hermes.is_file():
+        raise InstallerError("Approved Hermes executable no longer exists")
+    source = (
+        Path(plan.runtime.source_root) if plan.runtime.source_root is not None else Path(".")
+    )
+    if plan.install_mode == "patch" and not source.is_dir():
+        raise InstallerError("Approved Hermes source checkout no longer exists")
     actual_executable_sha256 = hashlib.sha256(hermes.read_bytes()).hexdigest()
     if not plan.executable_sha256 or not hmac.compare_digest(
         actual_executable_sha256, plan.executable_sha256
     ):
         raise InstallerError("Approved Hermes executable changed after approval")
     live_version, live_source = executable_probe(plan.runtime)
-    if (
-        live_version != plan.runtime.version
-        or live_source is None
-        or live_source.resolve() != source.resolve()
+    if live_version != plan.runtime.version:
+        raise InstallerError("Hermes executable identity changed after approval")
+    if plan.install_mode == "patch" and (
+        live_source is None or live_source.resolve() != source.resolve()
     ):
         raise InstallerError("Hermes executable identity changed after approval")
-    live_git = git_probe(source)
-    if (
-        not live_git.clean
-        or live_git.branch != plan.original_branch
-        or live_git.head != plan.original_head
-    ):
-        raise InstallerError(
-            "Hermes Git state changed after approval; run discovery and dry-run again"
-        )
+    if plan.install_mode == "patch":
+        live_git = git_probe(source)
+        if (
+            not live_git.clean
+            or live_git.branch != plan.original_branch
+            or live_git.head != plan.original_head
+        ):
+            raise InstallerError(
+                "Hermes Git state changed after approval; run discovery and dry-run again"
+            )
     stamp = timestamp()
     backup_branch = f"backup/hermes-cursor-native-{stamp}"
     target_branch = "cursor-provider-deployed"
@@ -302,32 +346,35 @@ def execute_install_plan(
     target_existed = existing.returncode == 0
 
     try:
-        _checked(run, ["git", "branch", backup_branch, "HEAD"], source)
-        backup_created = True
-        if target_existed:
-            _checked(run, ["git", "switch", target_branch], source)
+        if plan.install_mode == "plugin":
+            deploy_plugin(package_root, Path(plan.runtime.home))
         else:
-            _checked(run, ["git", "switch", "-c", target_branch], source)
+            _checked(run, ["git", "branch", backup_branch, "HEAD"], source)
+            backup_created = True
+            if target_existed:
+                _checked(run, ["git", "switch", target_branch], source)
+            else:
+                _checked(run, ["git", "switch", "-c", target_branch], source)
 
-        provider_marker = source / "agent" / "cursor_bridge_client.py"
-        provider_complete = provider_validator(source, plan.provider_file_sha256)
-        if provider_marker.exists() and not provider_complete:
-            raise InstallerError(
-                "Partial or unhardened Cursor provider detected; restore a clean base first"
-            )
-        if not provider_complete:
-            patch_root = package_root / "patches" / "hermes" / plan.runtime.version
-            for patch_name in plan.patch_series:
-                patch_path = patch_root / patch_name
-                if not patch_path.is_file():
-                    raise InstallerError(f"Patch file is missing: {patch_path}")
-                am_in_progress = True
-                _checked(run, ["git", "am", str(patch_path)], source)
-                am_in_progress = False
-            if not provider_validator(source, plan.provider_file_sha256):
+            provider_marker = source / "agent" / "cursor_bridge_client.py"
+            provider_complete = provider_validator(source, plan.provider_file_sha256)
+            if provider_marker.exists() and not provider_complete:
                 raise InstallerError(
-                    "Applied patch series did not produce a complete hardened provider"
+                    "Partial or unhardened Cursor provider detected; restore a clean base first"
                 )
+            if not provider_complete:
+                patch_root = package_root / "patches" / "hermes" / plan.runtime.version
+                for patch_name in plan.patch_series:
+                    patch_path = patch_root / patch_name
+                    if not patch_path.is_file():
+                        raise InstallerError(f"Patch file is missing: {patch_path}")
+                    am_in_progress = True
+                    _checked(run, ["git", "am", str(patch_path)], source)
+                    am_in_progress = False
+                if not provider_validator(source, plan.provider_file_sha256):
+                    raise InstallerError(
+                        "Applied patch series did not produce a complete hardened provider"
+                    )
 
         payload = download(plan.artifact["url"])
         verify_sha256(payload, plan.artifact["sha256"])
@@ -366,7 +413,11 @@ def execute_install_plan(
         ):
             _checked(run, [*config_prefix, key, value], source)
 
-        _checked(run, [str(hermes), "cursor", "login"], source, True)
+        _run_cursor_oauth(run, hermes, source, Path(plan.runtime.home), package_root)
+
+        if plan.install_mode == "plugin" and not plan.capabilities.fully_ready:
+            _checked(run, [str(hermes), *profile_args, "auth", "status", "cursor"], source)
+            return InstallResult("", "", bridge, config_backup)
 
         smoke_prefix = [str(hermes), *profile_args, "chat", "--provider", "cursor"]
         backup_root.mkdir(parents=True, exist_ok=True)

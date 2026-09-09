@@ -7,6 +7,7 @@ import pytest
 
 from hermes_cursor_native.cli import main
 from hermes_cursor_native.discovery import Runtime
+from hermes_cursor_native.capabilities import CapabilityReport
 from hermes_cursor_native.install_plan import (
     GitState,
     InstallBlockedError,
@@ -50,6 +51,30 @@ def _windows_runtime() -> Runtime:
     )
 
 
+def _patch_capabilities() -> CapabilityReport:
+    return CapabilityReport(
+        runtime_id="windows-current",
+        hermes_version="0.20.5",
+        source_root=Path("C:/Hermes/hermes-agent"),
+        plugin_seam=False,
+        provider_supplied_client=False,
+        streaming_sdkbridge_rail=False,
+        cursor_bridge_config=False,
+    )
+
+
+def _plugin_capabilities() -> CapabilityReport:
+    return CapabilityReport(
+        runtime_id="posix-current",
+        hermes_version="0.21.1",
+        source_root=Path("/root/.hermes/hermes-agent"),
+        plugin_seam=True,
+        provider_supplied_client=True,
+        streaming_sdkbridge_rail=False,
+        cursor_bridge_config=True,
+    )
+
+
 def test_plan_contains_explicit_ordered_operations_without_secrets() -> None:
     plan = build_install_plan(
         runtime=_windows_runtime(),
@@ -57,8 +82,10 @@ def test_plan_contains_explicit_ordered_operations_without_secrets() -> None:
         profile="default",
         git_state=GitState(clean=True, branch="main", head="9ddb6547"),
         architecture="x64",
+        capability_report=_patch_capabilities(),
     )
 
+    assert plan.install_mode == "patch"
     assert [operation.kind for operation in plan.operations] == [
         "backup",
         "branch",
@@ -83,22 +110,49 @@ def test_dirty_checkout_blocks_install() -> None:
             profile="default",
             git_state=GitState(clean=False, branch="main", head="9ddb6547"),
             architecture="x64",
+            capability_report=_patch_capabilities(),
         )
 
 
-def test_unsupported_hermes_version_blocks_install() -> None:
+def test_missing_capabilities_blocks_install() -> None:
     runtime = Runtime(
         **{**_windows_runtime().__dict__, "version": "0.19.0"},
     )
 
-    with pytest.raises(InstallBlockedError, match="0.19.0"):
+    with pytest.raises(InstallBlockedError, match="lacks required Cursor provider interfaces"):
         build_install_plan(
             runtime=runtime,
             manifest=_manifest(),
             profile="default",
             git_state=GitState(clean=True, branch="main", head="old"),
             architecture="x64",
+            capability_report=_patch_capabilities(),
         )
+
+
+def test_plugin_mode_plan_uses_user_plugin_operations() -> None:
+    runtime = Runtime(
+        "posix-current",
+        ("cli",),
+        "linux",
+        Path("/root/.hermes"),
+        Path("/root/.hermes/hermes-agent"),
+        Path("/root/.hermes/hermes-agent/venv/bin/hermes"),
+        "0.21.1",
+        True,
+        "active",
+    )
+    plan = build_install_plan(
+        runtime=runtime,
+        manifest=_manifest(),
+        profile="default",
+        git_state=None,
+        architecture="x64",
+        capability_report=_plugin_capabilities(),
+    )
+    assert plan.install_mode == "plugin"
+    assert plan.operations[1].kind == "plugin"
+    assert any(operation.kind == "note" for operation in plan.operations)
 
 
 def test_unrecognized_base_commit_blocks_fresh_patch_install() -> None:
@@ -109,6 +163,7 @@ def test_unrecognized_base_commit_blocks_fresh_patch_install() -> None:
             profile="default",
             git_state=GitState(clean=True, branch="main", head="unrelated"),
             architecture="x64",
+            capability_report=_patch_capabilities(),
         )
 
 
@@ -124,6 +179,7 @@ def test_maintained_deployment_branch_can_be_reconfigured_after_upstream_merge()
         ),
         architecture="x64",
         provider_installed=True,
+        capability_report=_patch_capabilities(),
     )
 
     assert plan.runtime.runtime_id == "windows-current"
@@ -142,6 +198,7 @@ def test_maintained_branch_without_valid_provider_proof_is_blocked() -> None:
             ),
             architecture="x64",
             provider_installed=False,
+            capability_report=_patch_capabilities(),
         )
 
 
@@ -187,6 +244,7 @@ def test_wsl_uses_linux_artifact_and_posix_paths() -> None:
         profile="research",
         git_state=GitState(clean=True, branch="main", head="9ddb6547"),
         architecture="x64",
+        capability_report=_patch_capabilities(),
     )
 
     assert plan.artifact_key == "linux-x64"
@@ -201,6 +259,7 @@ def test_missing_platform_artifact_blocks_install() -> None:
             profile="default",
             git_state=GitState(clean=True, branch="main", head="9ddb6547"),
             architecture="arm64",
+            capability_report=_patch_capabilities(),
         )
 
 
@@ -278,4 +337,5 @@ def test_missing_named_profile_is_never_created_by_install_planning() -> None:
             git_state=GitState(clean=True, branch="main", head="9ddb6547"),
             architecture="x64",
             profile_exists=False,
+            capability_report=_patch_capabilities(),
         )
