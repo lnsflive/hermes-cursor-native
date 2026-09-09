@@ -15,6 +15,7 @@ import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path, PurePosixPath
 
 from .discovery import Runtime
@@ -153,13 +154,16 @@ def safe_extract_tar(
         raise UnsafeArchiveError(f"Invalid tar archive: {exc}") from exc
 
 
-def run_command(args: list[str], cwd: Path, interactive: bool = False) -> CommandResult:
+def run_command(
+    args: list[str], cwd: Path, interactive: bool = False, *, env: dict[str, str] | None = None,
+) -> CommandResult:
     if interactive:
-        completed = subprocess.run(args, cwd=cwd, check=False)
+        completed = subprocess.run(args, cwd=cwd, env=env, check=False)
         return CommandResult(completed.returncode, "", "")
     completed = subprocess.run(
         args,
         cwd=cwd,
+        env=env,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -242,7 +246,7 @@ def execute_install_plan(
     *,
     package_root: Path,
     approved: bool,
-    run: CommandRunner = run_command,
+    run: CommandRunner | None = None,
     download: Downloader = download_url,
     timestamp: Callable[[], str] = _timestamp,
     host_os: str = os.name,
@@ -251,6 +255,8 @@ def execute_install_plan(
     """Apply an approved plugin-only install plan."""
 
     require_approval(approved)
+    if run is None:
+        run = partial(run_command, env={**os.environ, "HERMES_HOME": str(plan.runtime.home)})
     if plan.runtime.platform == "wsl" and host_os == "nt":
         raise UnsupportedRuntimeApplyError(
             "Run hermes-cursor-native install inside WSL; Windows will not mutate Linux state"
@@ -279,7 +285,7 @@ def execute_install_plan(
     bridge_backup: Path | None = None
     bridge_mutated = False
     bridge_root = Path(plan.runtime.home) / "cursor-sdk-bridge"
-    profile_args = [] if plan.profile == "default" else ["-p", plan.profile]
+    profile_args = ["-p", plan.profile]
     notes: list[str] = []
 
     try:
@@ -334,7 +340,9 @@ def execute_install_plan(
             notes.append("oauth skipped; run `hermes-cursor-native login` when ready")
 
         _checked(run, [str(hermes), *profile_args, "auth", "status", "cursor"], source)
-        receipt = collect_receipt(plan.runtime, bridge_path=bridge, notes=tuple(notes))
+        receipt = collect_receipt(
+            plan.runtime, bridge_path=bridge, profile=plan.profile, notes=tuple(notes),
+        )
         if not receipt.contract_checks.get("plugin_registered"):
             raise InstallerError("Post-install verification failed: cursor plugin not registered")
         if not receipt.contract_checks.get("client_contract"):

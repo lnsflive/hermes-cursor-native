@@ -49,10 +49,13 @@ def _hostname() -> str:
         return "unknown"
 
 
-def _safe_auth_status(hermes: Path, profile_args: list[str], cwd: Path) -> tuple[str, str]:
+def _safe_auth_status(
+    hermes: Path, profile_args: list[str], cwd: Path, hermes_home: Path,
+) -> tuple[str, str]:
     completed = subprocess.run(
         [str(hermes), *profile_args, "auth", "status", "cursor"],
         cwd=cwd,
+        env={**os.environ, "HERMES_HOME": str(hermes_home)},
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -212,18 +215,20 @@ def collect_receipt(
     *,
     bridge_path: Path,
     notes: tuple[str, ...] = (),
+    profile: str = "default",
 ) -> InstallReceipt:
     hermes_home = Path(runtime.home)
     plugin_path = hermes_home / "plugins" / "model-providers" / "cursor"
     hermes = Path(runtime.executable)  # type: ignore[arg-type]
     source_root = Path(runtime.source_root) if runtime.source_root else Path(".")
-    profile_args: list[str] = []
-    auth_status, auth_note = _safe_auth_status(hermes, profile_args, source_root)
+    profile_args = ["-p", profile]
+    auth_status, auth_note = _safe_auth_status(hermes, profile_args, source_root, hermes_home)
+    probe_home = hermes_home if profile == "default" else hermes_home / "profiles" / profile
     logged_in = auth_status == "logged in"
     python = resolve_hermes_python(runtime)
     contract = (
-        run_contract_checks(python, source_root, hermes_home)
-        if python.is_file() and source_root.is_dir()
+        run_contract_checks(python, source_root, probe_home)
+        if python is not None and python.is_file() and source_root.is_dir()
         else {
             "plugin_seam": False,
             "provider_client_seam": False,
@@ -232,13 +237,13 @@ def collect_receipt(
         }
     )
     catalog_count, catalog_error = (
-        _model_catalog_count(python, source_root, hermes_home, logged_in=logged_in)
-        if python.is_file() and source_root.is_dir()
+        _model_catalog_count(python, source_root, probe_home, logged_in=logged_in)
+        if python is not None and python.is_file() and source_root.is_dir()
         else (None, "python_missing")
     )
     runtime_probe = (
-        _runtime_auth_probe(python, source_root, hermes_home, logged_in=logged_in)
-        if python.is_file() and source_root.is_dir()
+        _runtime_auth_probe(python, source_root, probe_home, logged_in=logged_in)
+        if python is not None and python.is_file() and source_root.is_dir()
         else "runtime_probe_unavailable"
     )
     auth_source = ""

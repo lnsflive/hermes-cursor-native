@@ -82,6 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
     status = subcommands.add_parser("status", help="Show plugin/auth receipts for a runtime")
     status.add_argument("--runtime", help="Explicit runtime id from `discover`")
     status.add_argument("--hermes-home", help="Target HERMES_HOME for receipt probes")
+    status.add_argument("--profile", default="default", help="Hermes profile to inspect")
     status.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     return parser
 
@@ -140,7 +141,7 @@ def main(
             else bridge_root
             / ("cursor-sdk-bridge.exe" if runtime.platform == "windows" else "cursor-sdk-bridge")
         )
-        receipt = collect_receipt(runtime, bridge_path=bridge)
+        receipt = collect_receipt(runtime, bridge_path=bridge, profile=args.profile)
         if args.json:
             print(receipt.to_json())
         else:

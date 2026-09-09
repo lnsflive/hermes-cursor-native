@@ -4,6 +4,7 @@ import hashlib
 import io
 import tarfile
 from pathlib import Path
+from subprocess import CompletedProcess
 
 import pytest
 
@@ -55,10 +56,13 @@ def test_deploy_plugin_copies_bundle(tmp_path: Path) -> None:
     assert (destination / "plugin.yaml").is_file()
 
 
+@pytest.mark.parametrize("profile", ["default", "work"])
+@pytest.mark.parametrize("native_runner", [False, True])
 @pytest.mark.parametrize("existing", [False, True])
 @pytest.mark.parametrize("failure", [None, "copy", "checksum", "config", "contract"])
 def test_execute_install_plan_plugin_mode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, existing: bool, failure: str | None,
+    native_runner: bool, profile: str,
 ) -> None:
     home = tmp_path / "home"
     source = tmp_path / "hermes-agent"
@@ -119,7 +123,8 @@ def test_execute_install_plan_plugin_mode(
     plan = build_install_plan(
         runtime=runtime,
         manifest=manifest,
-        profile="default",
+        profile=profile,
+        profile_exists=True,
         architecture="x64",
         capability_report=capabilities,
     )
@@ -138,6 +143,7 @@ def test_execute_install_plan_plugin_mode(
 
     def run(args: list[str], cwd: Path, interactive: bool = False) -> CommandResult:
         calls.append(args)
+        args = [args[0], *args[3:]] if args[1:3] == ["-p", profile] else args
         if args[-2:] == ["config", "path"]:
             config.parent.mkdir(parents=True, exist_ok=True)
             return CommandResult(0, str(config), "")
@@ -153,7 +159,8 @@ def test_execute_install_plan_plugin_mode(
             return CommandResult(0, "Hermes Agent v0.21.1\n", "")
         return CommandResult(0, "", "")
 
-    def fake_receipt(runtime, *, bridge_path, notes=()):
+    def fake_receipt(runtime, *, bridge_path, notes=(), profile="default"):
+        assert profile == plan.profile
         return InstallReceipt(
             host="test",
             runtime_id=runtime.runtime_id,
@@ -188,12 +195,21 @@ def test_execute_install_plan_plugin_mode(
 
         monkeypatch.setattr(installer_mod.shutil, "copytree", failing_copy)
 
+    def subprocess_run(args, *, cwd, env, **kwargs):
+        assert env["HERMES_HOME"] == str(home)
+        result = run(args, cwd)
+        return CompletedProcess(args, result.returncode, result.stdout, result.stderr)
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "unrelated-home"))
+    if native_runner:
+        monkeypatch.setattr(installer_mod.subprocess, "run", subprocess_run)
+
     def install():
         return execute_install_plan(
             plan,
             package_root=package,
             approved=True,
-            run=run,
+            run=None if native_runner else run,
             download=lambda _url: b"corrupted" if failure == "checksum" else archive.getvalue(),
             executable_probe=lambda _runtime: ("0.21.1", source),
         )
