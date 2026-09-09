@@ -40,6 +40,24 @@ def test_entrypoint_formats_expected_errors_without_traceback(monkeypatch, capsy
     assert "Traceback" not in captured.err
 
 
+def test_status_rejects_unsafe_profile(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    runtime = Runtime("test", ("cli",), "linux", home, None, tmp_path / "hermes",
+                      "test", True, "active")
+    monkeypatch.chdir(tmp_path)
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("unsafe profile must be rejected before filesystem joins")
+
+    monkeypatch.setattr(cli, "resolve_status_bridge", unexpected)
+    with pytest.raises(InstallBlockedError, match="Invalid Hermes profile name"):
+        cli.main(["status", "--runtime", "test", "--profile", "../outside"],
+                 discover=lambda: [runtime])
+
+
 @pytest.mark.parametrize("count", [0, 1, 2])
 def test_status_reports_incomplete_bridge(tmp_path, monkeypatch, capsys, count):
     home = tmp_path / "home"

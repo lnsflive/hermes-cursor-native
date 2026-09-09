@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict, dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 from .capabilities import CapabilityReport, probe_runtime
@@ -15,6 +15,22 @@ from .manifest import InstallManifest
 
 class InstallBlockedError(RuntimeError):
     """Raised when installation preconditions are not satisfied."""
+
+
+def validate_profile_name(profile: str) -> None:
+    """Reject profile values that escape ``<HERMES_HOME>/profiles`` when joined."""
+    if profile == "default":
+        return
+    if not profile or profile in {".", ".."}:
+        raise InstallBlockedError(f"Invalid Hermes profile name: {profile!r}")
+    posix = PurePosixPath(profile)
+    windows = PureWindowsPath(profile)
+    if len(posix.parts) != 1 or len(windows.parts) != 1:
+        raise InstallBlockedError(f"Invalid Hermes profile name: {profile!r}")
+    if posix.is_absolute() or windows.is_absolute():
+        raise InstallBlockedError(f"Invalid Hermes profile name: {profile!r}")
+    if posix.parts[0] in {".", ".."} or windows.parts[0] in {".", ".."}:
+        raise InstallBlockedError(f"Invalid Hermes profile name: {profile!r}")
 
 
 @dataclass(frozen=True)
@@ -87,6 +103,7 @@ def build_install_plan(
     switch_default_model: bool = False,
     run_oauth: bool = False,
 ) -> InstallPlan:
+    validate_profile_name(profile)
     if not runtime.usable or runtime.executable is None:
         raise InstallBlockedError(f"Hermes runtime {runtime.runtime_id!r} is not usable")
     if profile != "default" and not profile_exists:

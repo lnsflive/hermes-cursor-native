@@ -11,7 +11,12 @@ from dataclasses import asdict, replace
 from pathlib import Path
 
 from .discovery import AmbiguousRuntimeError, DiscoveryError, Runtime, select_runtime
-from .install_plan import InstallBlockedError, InstallPlan, build_install_plan
+from .install_plan import (
+    InstallBlockedError,
+    InstallPlan,
+    build_install_plan,
+    validate_profile_name,
+)
 from .installer import (
     InstallerError,
     execute_install_plan,
@@ -149,6 +154,7 @@ def main(
             getattr(args, "hermes_home", None),
         )
         _require_local_runtime(runtime, "status")
+        validate_profile_name(args.profile)
         bridge, notes = resolve_status_bridge(runtime, args.profile)
         receipt = collect_receipt(runtime, bridge_path=bridge, profile=args.profile, notes=notes)
         if args.json:

@@ -8,7 +8,11 @@ import pytest
 from hermes_cursor_native.capabilities import CapabilityReport
 from hermes_cursor_native.cli import main
 from hermes_cursor_native.discovery import Runtime
-from hermes_cursor_native.install_plan import InstallBlockedError, build_install_plan
+from hermes_cursor_native.install_plan import (
+    InstallBlockedError,
+    build_install_plan,
+    validate_profile_name,
+)
 from hermes_cursor_native.manifest import InstallManifest
 
 
@@ -56,6 +60,15 @@ def _linux_runtime(root: Path) -> Runtime:
         True,
         "active",
     )
+
+
+@pytest.mark.parametrize(
+    "profile",
+    ["../escape", "../../tmp/evil", "/etc", "work/../other", ".", ".."],
+)
+def test_validate_profile_name_rejects_unsafe_paths(profile: str) -> None:
+    with pytest.raises(InstallBlockedError, match="Invalid Hermes profile name"):
+        validate_profile_name(profile)
 
 
 def test_plan_is_plugin_only_and_additive_by_default(tmp_path) -> None:

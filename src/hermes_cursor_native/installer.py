@@ -19,7 +19,7 @@ from functools import partial
 from pathlib import Path, PurePosixPath
 
 from .discovery import Runtime
-from .install_plan import InstallPlan
+from .install_plan import InstallPlan, validate_profile_name
 from .verify import InstallReceipt, collect_receipt
 
 
@@ -281,6 +281,7 @@ def execute_install_plan(
 ) -> InstallResult:
     """Apply an approved plugin-only install plan."""
 
+    validate_profile_name(plan.profile)
     require_approval(approved)
     if run is None:
         run = partial(run_command, env={**os.environ, "HERMES_HOME": str(plan.runtime.home)})
