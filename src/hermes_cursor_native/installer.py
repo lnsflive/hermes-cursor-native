@@ -281,7 +281,10 @@ def execute_install_plan(
     backup_root = Path(plan.runtime.home) / "cursor-native" / "backups" / stamp
     plugin_backup: Path | None = None
     plugin_mutated = False
-    plugin_path = Path(plan.runtime.home) / "plugins" / "model-providers" / "cursor"
+    plugin_home = Path(plan.runtime.home)
+    if plan.profile != "default":
+        plugin_home = plugin_home / "profiles" / plan.profile
+    plugin_path = plugin_home / "plugins" / "model-providers" / "cursor"
     bridge_backup: Path | None = None
     bridge_mutated = False
     bridge_root = Path(plan.runtime.home) / "cursor-sdk-bridge"
@@ -294,7 +297,7 @@ def execute_install_plan(
             plugin_backup = Path(tempfile.mkdtemp(prefix="plugin-", dir=backup_root)) / "cursor"
             plugin_path.rename(plugin_backup)
         plugin_mutated = True
-        plugin_path = deploy_plugin(package_root, Path(plan.runtime.home))
+        plugin_path = deploy_plugin(package_root, plugin_home)
 
         payload = download(plan.artifact["url"])
         verify_sha256(payload, plan.artifact["sha256"])

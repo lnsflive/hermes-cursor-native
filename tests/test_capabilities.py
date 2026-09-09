@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 from dataclasses import replace
 from pathlib import Path
 
@@ -59,3 +60,30 @@ def test_resolve_runtime_python(tmp_path: Path, layout: str, wrapper: bool) -> N
     python.unlink()
     assert resolve_hermes_python(runtime) is None
     assert resolve_hermes_python(replace(runtime, source_root=None, executable=None)) is None
+
+
+@pytest.mark.skipif(not HERMES_SOURCE.is_dir(), reason="stock Hermes checkout not present")
+@pytest.mark.parametrize("state", ["absent", "corrupt", "valid"])
+def test_deployed_probe_uses_selected_profile(tmp_path, monkeypatch, state):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    home = tmp_path / "estate"
+    selected = home / "profiles/work"
+    plugin_source = Path(__file__).resolve().parents[1] / "plugin/model-providers/cursor"
+    # A healthy default-profile plugin must not mask a missing/broken selected plugin.
+    shutil.copytree(plugin_source, home / "plugins/model-providers/cursor")
+    deployed = selected / "plugins/model-providers/cursor"
+    if state != "absent":
+        shutil.copytree(plugin_source, deployed)
+        if state == "corrupt":
+            (deployed / "__init__.py").write_text("raise RuntimeError('broken deployed plugin')")
+    executable = HERMES_SOURCE / ".venv/bin/hermes"
+    if not executable.exists():
+        executable = HERMES_SOURCE / "venv/bin/hermes"
+    runtime = Runtime("test", ("cli",), "linux", home, HERMES_SOURCE, executable,
+                      "test", True, "active")
+    report = probe_runtime(runtime, hermes_home=selected, deployed=True)
+    assert report.interface_ready
+    assert report.plugin_registered is (state == "valid")
+    assert report.client_contract is (state == "valid")
+    assert deployed.exists() is (state != "absent")

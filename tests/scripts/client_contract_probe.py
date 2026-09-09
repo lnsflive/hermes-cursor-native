@@ -85,4 +85,23 @@ response = client._handle_tool_callback(
     }
 )
 assert response["status"] == "deferred"
+class ToolTransport(FakeTransport):
+    def server_stream(self, *args, **kwargs):
+        run = client._active_runs["agent-1"]
+        run.captured_calls.extend([
+            {"toolName": "terminal", "args": {"command": "one"}},
+            {"toolName": "terminal", "args": {"command": "two"}},
+            {"toolName": "terminal", "args": {}, "toolCallId": "supplied-id"},
+        ])
+        yield {"done": True}
+
+
+client._transport = ToolTransport()
+with patch.object(client_module, "resolve_bridge_command", return_value="/bin/true"):
+    completion = client.chat.completions.create(model="auto", messages=[])
+calls = completion.choices[0].message.tool_calls
+assert len(calls) == 3
+assert all(call.id == call.call_id for call in calls)
+assert len({call.id for call in calls}) == 3
+assert calls[2].id == "supplied-id"
 print(json.dumps({"streaming": True, "tool_loop": True}))

@@ -201,7 +201,7 @@ def run_contract_checks(
         True,
         "verify",
     )
-    report = probe_runtime(runtime, hermes_home=hermes_home)
+    report = probe_runtime(runtime, hermes_home=hermes_home, deployed=True)
     return {
         "plugin_seam": report.plugin_seam,
         "provider_client_seam": report.provider_client_seam,
@@ -213,17 +213,17 @@ def run_contract_checks(
 def collect_receipt(
     runtime: Runtime,
     *,
-    bridge_path: Path,
+    bridge_path: Path | None,
     notes: tuple[str, ...] = (),
     profile: str = "default",
 ) -> InstallReceipt:
     hermes_home = Path(runtime.home)
-    plugin_path = hermes_home / "plugins" / "model-providers" / "cursor"
+    probe_home = hermes_home if profile == "default" else hermes_home / "profiles" / profile
+    plugin_path = probe_home / "plugins" / "model-providers" / "cursor"
     hermes = Path(runtime.executable)  # type: ignore[arg-type]
     source_root = Path(runtime.source_root) if runtime.source_root else Path(".")
     profile_args = ["-p", profile]
     auth_status, auth_note = _safe_auth_status(hermes, profile_args, source_root, hermes_home)
-    probe_home = hermes_home if profile == "default" else hermes_home / "profiles" / profile
     logged_in = auth_status == "logged in"
     python = resolve_hermes_python(runtime)
     contract = (
@@ -259,8 +259,8 @@ def collect_receipt(
         hermes_home=str(hermes_home),
         plugin_path=str(plugin_path),
         plugin_installed=plugin_path.is_dir(),
-        bridge_path=str(bridge_path),
-        bridge_installed=bridge_path.is_file(),
+        bridge_path=str(bridge_path) if bridge_path is not None else "",
+        bridge_installed=bridge_path is not None and bridge_path.is_file(),
         auth_status=auth_status,
         auth_source=auth_source,
         model_catalog_count=catalog_count,

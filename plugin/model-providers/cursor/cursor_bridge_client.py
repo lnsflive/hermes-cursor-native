@@ -704,19 +704,19 @@ class CursorBridgeClient:
                 code=str(error_code) if error_code else None,
             )
 
-        tool_calls = [
-            ChatCompletionMessageToolCall(
-                id=str(call.get("toolCallId") or self._next_call_id()),
-                call_id=str(call.get("toolCallId") or self._next_call_id()),
+        tool_calls = []
+        for call in captured:
+            call_id = str(call.get("toolCallId") or self._next_call_id())
+            tool_calls.append(ChatCompletionMessageToolCall(
+                id=call_id,
+                call_id=call_id,
                 response_item_id=None,
                 type="function",
                 function=Function(
                     name=str(call.get("toolName") or ""),
                     arguments=json.dumps(call.get("args") or {}, ensure_ascii=False),
                 ),
-            )
-            for call in captured
-        ]
+            ))
 
         usage = self._usage_namespace(usage_payload)
         assistant_message = SimpleNamespace(

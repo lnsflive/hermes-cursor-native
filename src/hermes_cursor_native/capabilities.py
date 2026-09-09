@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -231,6 +232,7 @@ def probe_runtime(
     *,
     package_root: Path | None = None,
     hermes_home: Path | None = None,
+    deployed: bool = False,
 ) -> CapabilityReport:
     """Probe interfaces by importing Hermes modules and exercising the plugin seam."""
     source_root = _hermes_source(runtime)
@@ -270,9 +272,13 @@ def probe_runtime(
 
     if interface_ready := (plugin_seam and provider_client_seam):
         root = package_root or _package_data_root()
-        with tempfile.TemporaryDirectory(prefix="hermes-cursor-probe-") as tmp:
+        context = nullcontext(home) if deployed else tempfile.TemporaryDirectory(
+            prefix="hermes-cursor-probe-",
+        )
+        with context as tmp:
             probe_home = Path(tmp)
-            _deploy_plugin(root, probe_home)
+            if not deployed:
+                _deploy_plugin(root, probe_home)
             probe_env = dict(env)
             probe_env["HERMES_HOME"] = str(probe_home)
             try:

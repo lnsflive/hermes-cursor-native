@@ -13,7 +13,6 @@ from .discovery import AmbiguousRuntimeError, DiscoveryError, Runtime, select_ru
 from .install_plan import InstallBlockedError, InstallPlan, build_install_plan
 from .installer import (
     InstallerError,
-    _find_bridge,
     execute_install_plan,
     run_command,
     run_cursor_oauth,
@@ -135,13 +134,13 @@ def main(
             getattr(args, "hermes_home", None),
         )
         bridge_root = Path(runtime.home) / "cursor-sdk-bridge"
-        bridge = (
-            _find_bridge(bridge_root, runtime.platform)
-            if bridge_root.is_dir()
-            else bridge_root
-            / ("cursor-sdk-bridge.exe" if runtime.platform == "windows" else "cursor-sdk-bridge")
+        expected = "cursor-sdk-bridge.exe" if runtime.platform == "windows" else "cursor-sdk-bridge"
+        matches = [path for path in bridge_root.rglob(expected) if path.is_file()]
+        bridge = matches[0] if len(matches) == 1 else None
+        notes = () if bridge is not None else (
+            f"bridge: expected one launcher, found {len(matches)}",
         )
-        receipt = collect_receipt(runtime, bridge_path=bridge, profile=args.profile)
+        receipt = collect_receipt(runtime, bridge_path=bridge, profile=args.profile, notes=notes)
         if args.json:
             print(receipt.to_json())
         else:

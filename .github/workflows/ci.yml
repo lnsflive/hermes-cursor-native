@@ -67,4 +67,4 @@ jobs:
           HERMES_AGENT_ROOT: ${{ runner.temp }}/hermes-agent
         run: |
           uv sync --extra dev
-          uv run pytest -q tests/test_client_contract.py tests/test_auth_shim.py tests/test_ui_integration.py tests/test_native_plugin.py
+          uv run pytest -q tests/test_capabilities.py tests/test_client_contract.py tests/test_auth_shim.py tests/test_ui_integration.py tests/test_native_plugin.py

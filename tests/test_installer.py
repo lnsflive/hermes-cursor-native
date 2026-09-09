@@ -129,7 +129,8 @@ def test_execute_install_plan_plugin_mode(
         capability_report=capabilities,
     )
 
-    destination = home / "plugins/model-providers/cursor"
+    plugin_home = home if profile == "default" else home / "profiles" / profile
+    destination = plugin_home / "plugins/model-providers/cursor"
     bridge_root = home / "cursor-sdk-bridge"
     config = home / "config.yaml"
     if existing:
