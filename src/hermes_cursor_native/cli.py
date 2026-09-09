@@ -144,6 +144,13 @@ def main(
         )
         _require_local_runtime(runtime, "status")
         bridge_root = Path(runtime.home) / "cursor-sdk-bridge"
+        if args.profile != "default":
+            profile_bridge = Path(runtime.home) / "profiles" / args.profile / "cursor-sdk-bridge"
+            # Native setup installs inside the profile; the management installer
+            # shares a bridge at the estate root. Do not hide a partial profile
+            # installation by reporting an unrelated root launcher as healthy.
+            if profile_bridge.exists():
+                bridge_root = profile_bridge
         expected = "cursor-sdk-bridge.exe" if runtime.platform == "windows" else "cursor-sdk-bridge"
         matches = [path for path in bridge_root.rglob(expected) if path.is_file()]
         bridge = matches[0] if len(matches) == 1 else None

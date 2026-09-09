@@ -93,3 +93,38 @@ def test_install_json_is_one_document(tmp_path, monkeypatch, capsys, dry_run):
         {"plan": "ready"} if dry_run else {"installed": True}
     )
     assert calls == ([] if dry_run else [plan])
+
+
+@pytest.mark.parametrize("profile_count", [None, 0, 1, 2])
+@pytest.mark.parametrize("platform", ["linux", "windows"])
+def test_status_prefers_selected_profile_bridge(
+    tmp_path, monkeypatch, capsys, profile_count, platform,
+):
+    home = tmp_path / "home"
+    name = "cursor-sdk-bridge.exe" if platform == "windows" else "cursor-sdk-bridge"
+    root_launcher = home / "cursor-sdk-bridge" / "bin" / name
+    root_launcher.parent.mkdir(parents=True)
+    root_launcher.touch()
+    other = home / "profiles" / "other" / "cursor-sdk-bridge" / "bin" / name
+    other.parent.mkdir(parents=True)
+    other.touch()
+    profile_root = home / "profiles" / "work" / "cursor-sdk-bridge"
+    if profile_count is not None:
+        profile_root.mkdir(parents=True)
+        for n in range(profile_count):
+            launcher = profile_root / str(n) / name
+            launcher.parent.mkdir()
+            launcher.touch()
+    runtime = Runtime("test", ("cli",), platform, home, None, tmp_path / "hermes",
+                      "test", True, "active")
+    monkeypatch.setattr(verify, "_safe_auth_status", lambda *args: ("logged out", ""))
+    assert cli.main(["status", "--runtime", "test", "--profile", "work", "--json"],
+                    discover=lambda: [runtime]) == 0
+    receipt = json.loads(capsys.readouterr().out)
+    expected = root_launcher if profile_count is None else profile_root / "0" / name
+    assert receipt["bridge_installed"] is (profile_count in {None, 1})
+    assert receipt["bridge_path"] == (str(expected) if profile_count in {None, 1} else "")
+    # Default status must continue reporting the estate bridge.
+    assert cli.main(["status", "--runtime", "test", "--json"],
+                    discover=lambda: [runtime]) == 0
+    assert json.loads(capsys.readouterr().out)["bridge_path"] == str(root_launcher)
