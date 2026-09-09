@@ -3,7 +3,7 @@
 from providers import register_provider
 from providers.base import ProviderProfile
 
-from .auth_shim import install_auth_shim
+from .auth_shim import install_auth_shim, sync_provider_auth_registry
 
 
 class CursorProfile(ProviderProfile):
@@ -46,8 +46,6 @@ class CursorProfile(ProviderProfile):
             return None
 
 
-install_auth_shim()
-
 cursor = CursorProfile(
     name="cursor",
     aliases=("cursor-sdk", "cursor-agent"),
@@ -66,3 +64,5 @@ cursor = CursorProfile(
 )
 
 register_provider(cursor)
+sync_provider_auth_registry(cursor)
+install_auth_shim()

@@ -87,10 +87,6 @@ os.environ.setdefault("HERMES_HOME", os.environ["HERMES_HOME"])
 try:
     import providers as providers_mod
     providers_mod._discover_providers()
-    import hermes_cli.auth as auth_mod
-    for pp in providers_mod.list_providers():
-        if pp.name not in auth_mod.PROVIDER_REGISTRY:
-            auth_mod._register_plugin_provider(pp)
     from hermes_cli.auth import resolve_api_key_provider_credentials
 
     creds = resolve_api_key_provider_credentials("cursor")
@@ -147,10 +143,6 @@ os.environ.setdefault("HERMES_HOME", os.environ["HERMES_HOME"])
 try:
     import providers as providers_mod
     providers_mod._discover_providers()
-    import hermes_cli.auth as auth_mod
-    for pp in providers_mod.list_providers():
-        if pp.name not in auth_mod.PROVIDER_REGISTRY:
-            auth_mod._register_plugin_provider(pp)
     from hermes_cli.runtime_provider import resolve_runtime_provider
 
     runtime = resolve_runtime_provider(requested="cursor")

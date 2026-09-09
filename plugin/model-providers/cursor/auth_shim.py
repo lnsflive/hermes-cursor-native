@@ -21,6 +21,22 @@ def _resolve_cursor_secret() -> tuple[str, str]:
     return resolve_cursor_api_key()
 
 
+def sync_provider_auth_registry(profile) -> bool:
+    """Register a plugin profile with stock ``hermes_cli.auth.PROVIDER_REGISTRY``.
+
+    ``register_provider()`` only updates ``providers``; ``hermes auth status`` reads
+    ``PROVIDER_REGISTRY``. Must run after the profile object exists.
+    """
+    try:
+        import hermes_cli.auth as auth_mod
+    except Exception as exc:
+        logger.debug("cursor auth registry sync unavailable: %s", exc)
+        return False
+    if profile.name not in auth_mod.PROVIDER_REGISTRY:
+        auth_mod._register_plugin_provider(profile)
+    return profile.name in auth_mod.PROVIDER_REGISTRY
+
+
 def install_auth_shim() -> bool:
     """Patch Hermes auth resolution once; safe to call repeatedly."""
     global _INSTALLED
