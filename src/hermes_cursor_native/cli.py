@@ -36,7 +36,7 @@ def _require_local_runtime(runtime: Runtime, command: str) -> None:
 def _apply_home_override(runtime: Runtime, hermes_home: str | None) -> Runtime:
     if not hermes_home:
         return runtime
-    return replace(runtime, home=Path(hermes_home))
+    return replace(runtime, home=Path(hermes_home).expanduser().resolve())
 
 
 def _runtime_dict(runtime: Runtime) -> dict[str, object]:

@@ -329,13 +329,38 @@ def test_run_cursor_oauth_surfaces_genuine_login_failure(tmp_path):
     home = tmp_path / "home"
     package = tmp_path / "package"
 
-    def run(_args, _cwd, interactive=False):
-        if not interactive:
+    def run(args, _cwd, interactive=False):
+        if args[-1] == "--help":
+            return CommandResult(0, "", "")
+        if args[-2:] == ["cursor", "login"] and interactive:
             return CommandResult(1, "", "login timed out")
-        return CommandResult(1, "", "")
+        pytest.fail(f"unexpected invocation: {args!r} interactive={interactive}")
 
     with pytest.raises(InstallerError, match="Cursor OAuth failed: login timed out"):
         run_cursor_oauth(run, hermes, source, home, package)
+
+
+def test_run_cursor_oauth_runs_supported_login_once(tmp_path):
+    hermes = tmp_path / "hermes"
+    source = tmp_path / "source"
+    source.mkdir()
+    home = tmp_path / "home"
+    package = tmp_path / "package"
+    calls: list[tuple[list[str], bool]] = []
+
+    def run(args, _cwd, interactive=False):
+        calls.append((list(args), interactive))
+        if args[-1] == "--help":
+            return CommandResult(0, "", "")
+        if args[-2:] == ["cursor", "login"]:
+            return CommandResult(0, "", "")
+        return CommandResult(0, "", "")
+
+    run_cursor_oauth(run, hermes, source, home, package)
+    login_calls = [call for call in calls if call[0][-2:] == ["cursor", "login"]]
+    assert len(login_calls) == 1
+    assert login_calls[0][1] is True
+    assert login_calls[0][0][0] == str(hermes)
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX shell stub is not executable on Windows")
@@ -343,9 +368,11 @@ def test_run_cursor_oauth_probes_before_interactive_login(tmp_path, monkeypatch)
     hermes = tmp_path / "hermes"
     hermes.write_text(
         "#!/bin/sh\n"
-        "if [ -t 0 ]; then exit 0; fi\n"
-        "echo \"Error: No such command 'cursor'.\" >&2\n"
-        "exit 2\n",
+        "if [ \"$3\" = \"--help\" ]; then\n"
+        "  echo \"Error: No such command 'cursor'.\" >&2\n"
+        "  exit 2\n"
+        "fi\n"
+        "exit 0\n",
         encoding="utf-8",
     )
     hermes.chmod(0o755)
@@ -377,8 +404,7 @@ def test_run_cursor_oauth_falls_back_when_command_missing(tmp_path, monkeypatch)
 
     def run(args, _cwd, interactive=False):
         calls.append((args, interactive))
-        if args[-2:] == ["cursor", "login"]:
-            assert interactive is False
+        if args[-3:] == ["cursor", "login", "--help"]:
             return CommandResult(2, "", "Error: No such command 'cursor'.")
         return CommandResult(0, "", "")
 

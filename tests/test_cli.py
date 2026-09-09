@@ -10,6 +10,14 @@ from hermes_cursor_native.discovery import Runtime
 from hermes_cursor_native.install_plan import InstallBlockedError
 
 
+def test_apply_home_override_resolves_relative_path(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runtime = Runtime("test", ("cli",), "linux", tmp_path / "default", None,
+                      tmp_path / "hermes", "test", True, "active")
+    overridden = cli._apply_home_override(runtime, "./estate")
+    assert overridden.home == (tmp_path / "estate").resolve()
+
+
 def test_entrypoint_formats_expected_errors_without_traceback(monkeypatch, capsys) -> None:
     def blocked(_argv=None):
         raise InstallBlockedError("checkout is incompatible")

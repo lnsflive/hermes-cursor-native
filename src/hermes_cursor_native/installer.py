@@ -228,9 +228,7 @@ def run_cursor_oauth(
     package_root: Path,
 ) -> None:
     login = [str(hermes), "cursor", "login"]
-    probe = run(login, source, False)
-    if probe.returncode == 0:
-        return
+    probe = run([*login, "--help"], source, False)
     if _cursor_login_unsupported(probe):
         auth_script = (
             hermes_home / "plugins" / "model-providers" / "cursor" / "cursor_sdk_auth.py"
