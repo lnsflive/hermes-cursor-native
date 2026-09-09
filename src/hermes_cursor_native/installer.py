@@ -1,4 +1,4 @@
-"""Security-critical installer primitives."""
+"""Security-critical installer primitives for the Cursor model-provider plugin."""
 
 from __future__ import annotations
 
@@ -6,20 +6,19 @@ import hashlib
 import hmac
 import io
 import os
-import secrets
-import sys
 import shutil
 import subprocess
+import sys
 import tarfile
 import urllib.request
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
 from .discovery import Runtime
-from .install_plan import GitState, InstallPlan
-from .preflight import probe_git_state, provider_installation_complete
+from .install_plan import InstallPlan
+from .verify import InstallReceipt, collect_receipt
 
 
 class InstallerError(RuntimeError):
@@ -51,10 +50,10 @@ class CommandResult:
 
 @dataclass(frozen=True)
 class InstallResult:
-    branch: str
-    backup_branch: str
     bridge_path: Path
+    plugin_path: Path
     config_backup: Path | None
+    receipt: InstallReceipt
 
 
 CommandRunner = Callable[[list[str], Path, bool], CommandResult]
@@ -88,11 +87,6 @@ def verify_sha256(payload: bytes, expected: str) -> None:
     actual = hashlib.sha256(payload).hexdigest()
     if not hmac.compare_digest(actual.casefold(), expected.casefold()):
         raise ChecksumMismatchError(f"SHA256 mismatch: expected {expected}, got {actual}")
-
-
-def validate_smoke_output(result: CommandResult, marker: str, label: str) -> None:
-    if marker not in result.stdout:
-        raise InstallerError(f"{label} smoke did not return expected marker {marker!r}")
 
 
 def _safe_member_path(destination: Path, member_name: str) -> Path:
@@ -145,8 +139,6 @@ def safe_extract_tar(
     max_files: int = 500,
     max_total_bytes: int = 512 * 1024 * 1024,
 ) -> None:
-    """Extract regular files/directories only, with strict containment bounds."""
-
     destination.mkdir(parents=True, exist_ok=True)
     try:
         with tarfile.open(fileobj=io.BytesIO(payload), mode="r:gz") as archive:
@@ -210,24 +202,17 @@ def _timestamp() -> str:
     return datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
 
 
-def _tool_nonce() -> str:
-    return secrets.token_hex(16)
-
-
-def _run_cursor_oauth(
+def run_cursor_oauth(
     run: CommandRunner,
     hermes: Path,
     source: Path,
     hermes_home: Path,
     package_root: Path,
 ) -> None:
-    """Launch browser OAuth via core CLI when present, else the plugin auth script."""
     result = run([str(hermes), "cursor", "login"], source, True)
     if result.returncode == 0:
         return
-    auth_script = (
-        hermes_home / "plugins" / "model-providers" / "cursor" / "cursor_sdk_auth.py"
-    )
+    auth_script = hermes_home / "plugins" / "model-providers" / "cursor" / "cursor_sdk_auth.py"
     if not auth_script.is_file():
         auth_script = package_root / "plugin" / "model-providers" / "cursor" / "cursor_sdk_auth.py"
     if not auth_script.is_file():
@@ -240,7 +225,6 @@ def _run_cursor_oauth(
 
 
 def deploy_plugin(package_root: Path, hermes_home: Path) -> Path:
-    """Copy the bundled Cursor model-provider plugin into the user's Hermes home."""
     source = package_root / "plugin" / "model-providers" / "cursor"
     if not source.is_dir():
         raise InstallerError(f"Plugin source is missing: {source}")
@@ -261,16 +245,9 @@ def execute_install_plan(
     download: Downloader = download_url,
     timestamp: Callable[[], str] = _timestamp,
     host_os: str = os.name,
-    provider_validator: Callable[[Path, Mapping[str, str]], bool] = (
-        provider_installation_complete
-    ),
-    git_probe: Callable[[Path], GitState] = probe_git_state,
-    nonce_factory: Callable[[], str] = _tool_nonce,
-    executable_probe: Callable[[Runtime], tuple[str, Path | None]] = (
-        probe_executable_identity
-    ),
+    executable_probe: Callable[[Runtime], tuple[str, Path | None]] = probe_executable_identity,
 ) -> InstallResult:
-    """Apply an approved plan. Credentials never cross the command argument boundary."""
+    """Apply an approved plugin-only install plan."""
 
     require_approval(approved)
     if plan.runtime.platform == "wsl" and host_os == "nt":
@@ -280,101 +257,29 @@ def execute_install_plan(
     hermes = Path(plan.runtime.executable)  # type: ignore[arg-type]
     if not hermes.is_file():
         raise InstallerError("Approved Hermes executable no longer exists")
-    source = (
-        Path(plan.runtime.source_root) if plan.runtime.source_root is not None else Path(".")
-    )
-    if plan.install_mode == "patch" and not source.is_dir():
-        raise InstallerError("Approved Hermes source checkout no longer exists")
+    source = Path(plan.runtime.source_root) if plan.runtime.source_root is not None else Path(".")
     actual_executable_sha256 = hashlib.sha256(hermes.read_bytes()).hexdigest()
     if not plan.executable_sha256 or not hmac.compare_digest(
         actual_executable_sha256, plan.executable_sha256
     ):
         raise InstallerError("Approved Hermes executable changed after approval")
-    live_version, live_source = executable_probe(plan.runtime)
+    live_version, _live_source = executable_probe(plan.runtime)
     if live_version != plan.runtime.version:
         raise InstallerError("Hermes executable identity changed after approval")
-    if plan.install_mode == "patch" and (
-        live_source is None or live_source.resolve() != source.resolve()
-    ):
-        raise InstallerError("Hermes executable identity changed after approval")
-    if plan.install_mode == "patch":
-        live_git = git_probe(source)
-        if (
-            not live_git.clean
-            or live_git.branch != plan.original_branch
-            or live_git.head != plan.original_head
-        ):
-            raise InstallerError(
-                "Hermes Git state changed after approval; run discovery and dry-run again"
-            )
+
     stamp = timestamp()
-    backup_branch = f"backup/hermes-cursor-native-{stamp}"
-    target_branch = "cursor-provider-deployed"
     config_path: Path | None = None
     config_backup: Path | None = None
     config_existed = False
-    tool_probe_path: Path | None = None
     backup_root = Path(plan.runtime.home) / "cursor-native" / "backups" / stamp
     bridge_backup: Path | None = None
     bridge_mutated = False
-    backup_created = False
-    am_in_progress = False
-    bridge_root = (
-        Path(plan.runtime.home) / "cursor-native" / "bridge" / plan.manifest_version
-    )
-
-    existing = run(
-        ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{target_branch}"],
-        source,
-        False,
-    )
-    if existing.returncode not in {0, 1}:
-        raise InstallerError(
-            "Could not inspect deployment branch: "
-            f"{existing.stderr.strip() or existing.stdout.strip()}"
-        )
-    target_head = ""
-    if existing.returncode == 0:
-        current_head = _checked(run, ["git", "rev-parse", "HEAD"], source).stdout.strip()
-        target_head = _checked(
-            run, ["git", "rev-parse", target_branch], source
-        ).stdout.strip()
-        if current_head != target_head:
-            raise InstallerError(
-                f"Existing {target_branch} diverges from current HEAD; reconcile it manually"
-            )
-    target_existed = existing.returncode == 0
+    bridge_root = Path(plan.runtime.home) / "cursor-sdk-bridge"
+    profile_args = [] if plan.profile == "default" else ["-p", plan.profile]
+    notes: list[str] = []
 
     try:
-        if plan.install_mode == "plugin":
-            deploy_plugin(package_root, Path(plan.runtime.home))
-        else:
-            _checked(run, ["git", "branch", backup_branch, "HEAD"], source)
-            backup_created = True
-            if target_existed:
-                _checked(run, ["git", "switch", target_branch], source)
-            else:
-                _checked(run, ["git", "switch", "-c", target_branch], source)
-
-            provider_marker = source / "agent" / "cursor_bridge_client.py"
-            provider_complete = provider_validator(source, plan.provider_file_sha256)
-            if provider_marker.exists() and not provider_complete:
-                raise InstallerError(
-                    "Partial or unhardened Cursor provider detected; restore a clean base first"
-                )
-            if not provider_complete:
-                patch_root = package_root / "patches" / "hermes" / plan.runtime.version
-                for patch_name in plan.patch_series:
-                    patch_path = patch_root / patch_name
-                    if not patch_path.is_file():
-                        raise InstallerError(f"Patch file is missing: {patch_path}")
-                    am_in_progress = True
-                    _checked(run, ["git", "am", str(patch_path)], source)
-                    am_in_progress = False
-                if not provider_validator(source, plan.provider_file_sha256):
-                    raise InstallerError(
-                        "Applied patch series did not produce a complete hardened provider"
-                    )
+        plugin_path = deploy_plugin(package_root, Path(plan.runtime.home))
 
         payload = download(plan.artifact["url"])
         verify_sha256(payload, plan.artifact["sha256"])
@@ -388,10 +293,7 @@ def execute_install_plan(
         safe_extract_tar(payload, bridge_root)
         bridge = _find_bridge(bridge_root, plan.runtime.platform)
 
-        profile_args = [] if plan.profile == "default" else ["-p", plan.profile]
-        config_result = _checked(
-            run, [str(hermes), *profile_args, "config", "path"], source
-        )
+        config_result = _checked(run, [str(hermes), *profile_args, "config", "path"], source)
         reported_config = config_result.stdout.strip().splitlines()
         if reported_config:
             config_path = Path(reported_config[-1].strip())
@@ -402,86 +304,35 @@ def execute_install_plan(
                 shutil.copy2(config_path, config_backup)
 
         config_prefix = [str(hermes), *profile_args, "config", "set"]
-        for key, value in (
-            ("model.provider", "cursor"),
-            ("model.default", "composer-2.5"),
-            ("model.context_length", "200000"),
+        bridge_settings = (
             ("cursor_bridge.command", str(bridge)),
             ("cursor_bridge.tool_mode", "loop"),
             ("cursor_bridge.builtin_tools", "false"),
-            ("updates.parked_branch_strategy", "update_in_place"),
-        ):
+        )
+        if plan.switch_default_model:
+            bridge_settings = (
+                *bridge_settings,
+                ("model.provider", "cursor"),
+                ("model.default", "composer-2.5"),
+                ("model.context_length", "200000"),
+            )
+        for key, value in bridge_settings:
             _checked(run, [*config_prefix, key, value], source)
 
-        _run_cursor_oauth(run, hermes, source, Path(plan.runtime.home), package_root)
+        if plan.run_oauth:
+            run_cursor_oauth(run, hermes, source, Path(plan.runtime.home), package_root)
+        else:
+            notes.append("oauth skipped; run `hermes-cursor-native login` when ready")
 
-        if plan.install_mode == "plugin" and not plan.capabilities.fully_ready:
-            _checked(run, [str(hermes), *profile_args, "auth", "status", "cursor"], source)
-            return InstallResult("", "", bridge, config_backup)
-
-        smoke_prefix = [str(hermes), *profile_args, "chat", "--provider", "cursor"]
-        backup_root.mkdir(parents=True, exist_ok=True)
-        tool_nonce = nonce_factory()
-        tool_probe_path = backup_root / "tool-smoke.txt"
-        tool_probe_path.write_text(tool_nonce, encoding="utf-8")
-        smokes = (
-            (
-                [
-                    *smoke_prefix,
-                    "-m",
-                    "composer-2.5",
-                    "-q",
-                    "Reply exactly COMPOSER_OK",
-                    "-Q",
-                ],
-                "COMPOSER_OK",
-                "Composer",
-            ),
-            (
-                [
-                    *smoke_prefix,
-                    "-m",
-                    "grok-4.6",
-                    "-q",
-                    "Reply exactly GROK_OK",
-                    "-Q",
-                ],
-                "GROK_OK",
-                "Grok",
-            ),
-            (
-                [*smoke_prefix, "-q", "Reply exactly AUTO_OK", "-Q"],
-                "AUTO_OK",
-                "automatic routing",
-            ),
-            (
-                [
-                    *smoke_prefix,
-                    "-m",
-                    "composer-2.5",
-                    "-t",
-                    "terminal",
-                    "-q",
-                    f"Use the Hermes terminal tool to read {tool_probe_path}. "
-                    "Reply exactly with the file contents.",
-                    "-Q",
-                ],
-                tool_nonce,
-                "Hermes terminal tool",
-            ),
-        )
-        for command, marker, label in smokes:
-            result = _checked(run, command, source)
-            validate_smoke_output(result, marker, label)
-        tool_probe_path.unlink()
-        tool_probe_path = None
+        _checked(run, [str(hermes), *profile_args, "auth", "status", "cursor"], source)
+        receipt = collect_receipt(plan.runtime, bridge_path=bridge, notes=tuple(notes))
+        if not receipt.contract_checks.get("plugin_registered"):
+            raise InstallerError("Post-install verification failed: cursor plugin not registered")
+        if not receipt.contract_checks.get("client_contract"):
+            raise InstallerError("Post-install verification failed: client contract checks failed")
+        return InstallResult(bridge, plugin_path, config_backup, receipt)
     except BaseException as exc:
         rollback_errors: list[str] = []
-        if tool_probe_path is not None and tool_probe_path.exists():
-            try:
-                tool_probe_path.unlink()
-            except OSError as rollback_exc:
-                rollback_errors.append(f"tool probe cleanup failed: {rollback_exc}")
         if config_path is not None:
             try:
                 if config_existed and config_backup is not None and config_backup.is_file():
@@ -499,72 +350,6 @@ def execute_install_plan(
                     shutil.move(str(bridge_backup), str(bridge_root))
             except OSError as rollback_exc:
                 rollback_errors.append(f"bridge restore failed: {rollback_exc}")
-        rollback_commands: list[list[str]] = []
-        if am_in_progress:
-            rollback_commands.append(["git", "am", "--abort"])
-        if backup_created:
-            if plan.original_branch:
-                rollback_commands.append(["git", "switch", plan.original_branch])
-            else:
-                rollback_commands.append(["git", "switch", "--detach", plan.original_head])
-        git_restore_ok = True
-        for command in rollback_commands:
-            try:
-                result = run(command, source, False)
-                if result.returncode != 0:
-                    git_restore_ok = False
-                    rollback_errors.append(
-                        f"rollback command failed: {' '.join(command)}: "
-                        f"{result.stderr.strip() or result.stdout.strip()}"
-                    )
-            except BaseException as rollback_exc:
-                git_restore_ok = False
-                rollback_errors.append(
-                    f"rollback command raised: {' '.join(command)}: {rollback_exc}"
-                )
-        if backup_created and git_restore_ok and not target_existed:
-            created = run(
-                [
-                    "git",
-                    "show-ref",
-                    "--verify",
-                    "--quiet",
-                    f"refs/heads/{target_branch}",
-                ],
-                source,
-                False,
-            )
-            if created.returncode == 0:
-                result = run(["git", "branch", "-D", target_branch], source, False)
-                if result.returncode != 0:
-                    rollback_errors.append(
-                        f"rollback command failed: git branch -D {target_branch}: "
-                        f"{result.stderr.strip() or result.stdout.strip()}"
-                    )
-            elif created.returncode != 1:
-                rollback_errors.append(
-                    "rollback branch inspection failed: "
-                    f"{created.stderr.strip() or created.stdout.strip()}"
-                )
-        elif backup_created and git_restore_ok and target_existed:
-            if plan.original_branch == target_branch:
-                restore_target = ["git", "reset", "--hard", target_head]
-            else:
-                restore_target = ["git", "branch", "-f", target_branch, target_head]
-            try:
-                result = run(restore_target, source, False)
-                if result.returncode != 0:
-                    rollback_errors.append(
-                        f"deployment branch restore failed: {' '.join(restore_target)}: "
-                        f"{result.stderr.strip() or result.stdout.strip()}"
-                    )
-            except BaseException as rollback_exc:
-                rollback_errors.append(
-                    f"deployment branch restore raised: {' '.join(restore_target)}: "
-                    f"{rollback_exc}"
-                )
         if rollback_errors:
             raise InstallerError("; ".join(rollback_errors)) from exc
         raise
-
-    return InstallResult(target_branch, backup_branch, bridge, config_backup)

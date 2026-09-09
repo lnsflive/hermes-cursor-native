@@ -1,750 +1,177 @@
 from __future__ import annotations
 
+import hashlib
 import io
-import subprocess
 import tarfile
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 import pytest
 
+from hermes_cursor_native.capabilities import CapabilityReport
 from hermes_cursor_native.discovery import Runtime
-from hermes_cursor_native.install_plan import (
-    GitState,
-    InstallManifest,
-    build_install_plan,
-)
+from hermes_cursor_native.install_plan import build_install_plan
+from hermes_cursor_native.manifest import InstallManifest
 from hermes_cursor_native.installer import (
     ApprovalRequiredError,
-    ChecksumMismatchError,
     CommandResult,
-    InstallerError,
-    UnsafeArchiveError,
-    UnsupportedRuntimeApplyError,
+    deploy_plugin,
     execute_install_plan,
     require_approval,
     safe_extract_tar,
-    validate_smoke_output,
     verify_sha256,
 )
-from hermes_cursor_native.preflight import probe_git_state
+from hermes_cursor_native.verify import InstallReceipt
 
 
-def test_apply_requires_explicit_approval() -> None:
+def test_require_approval_blocks_unapproved_install() -> None:
     with pytest.raises(ApprovalRequiredError):
         require_approval(False)
 
-    require_approval(True)
+
+def test_verify_sha256_detects_mismatch() -> None:
+    with pytest.raises(Exception, match="SHA256 mismatch"):
+        verify_sha256(b"payload", "0" * 64)
 
 
-def test_verify_sha256_accepts_expected_digest() -> None:
-    payload = b"verified bridge archive"
-
-    verify_sha256(
-        payload,
-        "a75acc00784d9ae9151a686583b7295328df44c696743a01508e8612f9b18faa",
-    )
-
-
-def test_verify_sha256_rejects_mismatch() -> None:
-    with pytest.raises(ChecksumMismatchError):
-        verify_sha256(b"tampered", "0" * 64)
+def test_safe_extract_tar_rejects_path_traversal(tmp_path: Path) -> None:
+    payload = io.BytesIO()
+    with tarfile.open(fileobj=payload, mode="w:gz") as archive:
+        info = tarfile.TarInfo(name="../escape.txt")
+        info.size = 4
+        archive.addfile(info, io.BytesIO(b"evil"))
+    with pytest.raises(Exception, match="Unsafe archive path"):
+        safe_extract_tar(payload.getvalue(), tmp_path / "dest")
 
 
-def test_smoke_output_requires_expected_marker() -> None:
-    with pytest.raises(InstallerError, match="Composer smoke"):
-        validate_smoke_output(
-            CommandResult(0, "wrong response", ""),
-            "COMPOSER_OK",
-            "Composer",
-        )
-
-    validate_smoke_output(
-        CommandResult(0, "COMPOSER_OK\n", ""),
-        "COMPOSER_OK",
-        "Composer",
-    )
+def test_deploy_plugin_copies_bundle(tmp_path: Path) -> None:
+    package = tmp_path / "package"
+    source = package / "plugin/model-providers/cursor"
+    source.mkdir(parents=True)
+    (source / "plugin.yaml").write_text("kind: model-provider\n", encoding="utf-8")
+    home = tmp_path / "home"
+    destination = deploy_plugin(package, home)
+    assert destination.is_dir()
+    assert (destination / "plugin.yaml").is_file()
 
 
-def _archive(name: str, content: bytes = b"x") -> bytes:
-    output = io.BytesIO()
-    with tarfile.open(fileobj=output, mode="w:gz") as archive:
-        info = tarfile.TarInfo(name)
-        info.size = len(content)
-        archive.addfile(info, io.BytesIO(content))
-    return output.getvalue()
-
-
-def test_safe_extract_tar_rejects_parent_traversal(tmp_path: Path) -> None:
-    with pytest.raises(UnsafeArchiveError):
-        safe_extract_tar(_archive("../escape.txt"), tmp_path)
-
-    assert not (tmp_path.parent / "escape.txt").exists()
-
-
-def test_safe_extract_tar_extracts_contained_file(tmp_path: Path) -> None:
-    safe_extract_tar(_archive("bridge/bin/cursor-sdk-bridge", b"binary"), tmp_path)
-
-    assert (tmp_path / "bridge/bin/cursor-sdk-bridge").read_bytes() == b"binary"
-
-
-def test_execute_install_plan_runs_ordered_secret_free_commands(tmp_path: Path) -> None:
+def test_execute_install_plan_plugin_mode(tmp_path: Path) -> None:
+    home = tmp_path / "home"
     source = tmp_path / "hermes-agent"
     source.mkdir()
-    executable = source / "venv/Scripts/hermes.exe"
-    executable.parent.mkdir(parents=True)
-    executable.write_bytes(b"launcher")
-    config_path = tmp_path / "hermes-home/config.yaml"
-    config_path.parent.mkdir(parents=True)
-    config_path.write_text("model: old\n", encoding="utf-8")
+    hermes = source / "venv/bin/hermes"
+    hermes.parent.mkdir(parents=True)
+    hermes.write_bytes(b"hermes")
+    hermes.chmod(0o755)
+
+    package = tmp_path / "package"
+    plugin = package / "plugin/model-providers/cursor"
+    plugin.mkdir(parents=True)
+    (plugin / "plugin.yaml").write_text("kind: model-provider\n", encoding="utf-8")
+    (plugin / "__init__.py").write_text("from providers import register_provider\n", encoding="utf-8")
+
+    bridge_name = "cursor-sdk-bridge"
+    archive = io.BytesIO()
+    with tarfile.open(fileobj=archive, mode="w:gz") as tar:
+        data = b"#!/bin/sh\necho bridge\n"
+        info = tarfile.TarInfo(name=f"bin/{bridge_name}")
+        info.size = len(data)
+        info.mode = 0o755
+        tar.addfile(info, io.BytesIO(data))
+    digest = hashlib.sha256(archive.getvalue()).hexdigest()
+
     runtime = Runtime(
-        "windows-current",
+        "posix-current",
         ("cli",),
-        "windows",
-        tmp_path / "hermes-home",
+        "linux",
+        home,
         source,
-        executable,
-        "0.20.5",
+        hermes,
+        "0.21.1",
         True,
         "active",
     )
-    patch_root = tmp_path / "package" / "patches/hermes/0.20.5"
-    patch_root.mkdir(parents=True)
-    (patch_root / "0001.patch").write_text("patch", encoding="utf-8")
-    archive = _archive("bridge/bin/cursor-sdk-bridge.exe", b"binary")
-    import hashlib
-
     manifest = InstallManifest(
-        version="0.1.0a1",
-        supported_hermes=("0.20.5",),
-        base_commits=("base",),
-        artifacts={
-            "windows-x64": {
-                "filename": "bridge.tar.gz",
-                "sha256": hashlib.sha256(archive).hexdigest(),
-                "url": "https://example.invalid/bridge.tar.gz",
-            }
-        },
-        patch_series=("0001.patch",),
-    )
-    plan = build_install_plan(
-        runtime=runtime,
-        manifest=manifest,
-        profile="default",
-        git_state=GitState(clean=True, branch="main", head="base"),
-        architecture="x64",
-    )
-    calls: list[tuple[list[str], Path, bool]] = []
-    patched = [False]
-
-    def run(args: list[str], cwd: Path, interactive: bool = False) -> CommandResult:
-        calls.append((args, cwd, interactive))
-        if args[1:3] == ["show-ref", "--verify"]:
-            return CommandResult(1, "", "")
-        if args[-2:] == ["config", "path"]:
-            return CommandResult(0, str(config_path), "")
-        if args[1:2] == ["am"]:
-            patched[0] = True
-        if "chat" in args:
-            query = args[args.index("-q") + 1]
-            if "COMPOSER_OK" in query:
-                return CommandResult(0, "COMPOSER_OK\n", "")
-            if "GROK_OK" in query:
-                return CommandResult(0, "GROK_OK\n", "")
-            if "AUTO_OK" in query:
-                return CommandResult(0, "AUTO_OK\n", "")
-            if "tool-smoke.txt" in query:
-                return CommandResult(0, "TOOL_NONCE\n", "")
-        return CommandResult(0, "", "")
-
-    result = execute_install_plan(
-        plan,
-        package_root=tmp_path / "package",
-        approved=True,
-        run=run,
-        download=lambda _url: archive,
-        timestamp=lambda: "20260822-010000",
-        provider_validator=lambda _root, _hashes: patched[0],
-        git_probe=lambda _root: GitState(
-            clean=True, branch=plan.original_branch, head=plan.original_head
-        ),
-        executable_probe=lambda _runtime: (runtime.version, source),
-        nonce_factory=lambda: "TOOL_NONCE",
-    )
-
-    flattened = "\n".join(" ".join(args) for args, _cwd, _interactive in calls)
-    assert "CURSOR_API_KEY" not in flattened
-    assert "auth.json" not in flattened
-    assert "git branch backup/hermes-cursor-native-20260822-010000" in flattened
-    assert "git switch -c cursor-provider-deployed" in flattened
-    assert "git am" in flattened
-    assert "cursor login" in flattened
-    assert calls[-1][2] is False
-    assert result.bridge_path.name == "cursor-sdk-bridge.exe"
-    assert result.config_backup is not None
-    assert result.config_backup.read_text(encoding="utf-8") == "model: old\n"
-    assert result.branch == "cursor-provider-deployed"
-
-
-def test_windows_executor_refuses_cross_os_wsl_mutation(tmp_path: Path) -> None:
-    runtime = Runtime(
-        "wsl:Ubuntu",
-        ("cli",),
-        "wsl",
-        PurePosixPath("/home/test/.hermes"),
-        PurePosixPath("/home/test/.hermes/hermes-agent"),
-        PurePosixPath("/home/test/.local/bin/hermes"),
-        "0.20.5",
-        True,
-        "available",
-    )
-    manifest = InstallManifest(
-        version="0.1.0a1",
-        supported_hermes=("0.20.5",),
-        base_commits=("base",),
+        version="0.2.0a1",
         artifacts={
             "linux-x64": {
                 "filename": "bridge.tar.gz",
-                "sha256": "a" * 64,
+                "sha256": digest,
                 "url": "https://example.invalid/bridge.tar.gz",
             }
         },
-        patch_series=("0001.patch",),
+    )
+    capabilities = CapabilityReport(
+        runtime_id="posix-current",
+        hermes_version="0.21.1",
+        source_root=source,
+        plugin_seam=True,
+        provider_client_seam=True,
+        plugin_registered=True,
+        client_contract=True,
     )
     plan = build_install_plan(
         runtime=runtime,
         manifest=manifest,
         profile="default",
-        git_state=GitState(clean=True, branch="main", head="base"),
         architecture="x64",
+        capability_report=capabilities,
     )
 
-    with pytest.raises(UnsupportedRuntimeApplyError, match="inside WSL"):
-        execute_install_plan(
-            plan,
-            package_root=tmp_path,
-            approved=True,
-            host_os="nt",
-        )
-
-
-def test_executor_refuses_divergent_existing_deployment_branch(tmp_path: Path) -> None:
-    source = tmp_path / "hermes-agent"
-    source.mkdir()
-    executable = source / "venv/Scripts/hermes.exe"
-    executable.parent.mkdir(parents=True)
-    executable.write_bytes(b"launcher")
-    runtime = Runtime(
-        "windows-current",
-        ("cli",),
-        "windows",
-        tmp_path / "home",
-        source,
-        executable,
-        "0.20.5",
-        True,
-        "active",
-    )
-    manifest = InstallManifest(
-        version="0.1.0a1",
-        supported_hermes=("0.20.5",),
-        base_commits=("current",),
-        artifacts={
-            "windows-x64": {
-                "filename": "bridge.tar.gz",
-                "sha256": "a" * 64,
-                "url": "https://example.invalid/bridge.tar.gz",
-            }
-        },
-        patch_series=("0001.patch",),
-    )
-    plan = build_install_plan(
-        runtime=runtime,
-        manifest=manifest,
-        profile="default",
-        git_state=GitState(clean=True, branch="main", head="current"),
-        architecture="x64",
-    )
-    calls = []
+    calls: list[list[str]] = []
 
     def run(args: list[str], cwd: Path, interactive: bool = False) -> CommandResult:
         calls.append(args)
-        if args[1:3] == ["show-ref", "--verify"]:
-            return CommandResult(0, "", "")
-        if args[1:] == ["rev-parse", "HEAD"]:
-            return CommandResult(0, "current\n", "")
-        if args[1:] == ["rev-parse", "cursor-provider-deployed"]:
-            return CommandResult(0, "stale\n", "")
-        return CommandResult(0, "", "")
-
-    with pytest.raises(InstallerError, match="diverges"):
-        execute_install_plan(
-            plan,
-            package_root=tmp_path,
-            approved=True,
-            run=run,
-            timestamp=lambda: "20260822-010000",
-            git_probe=lambda _root: GitState(
-                clean=True, branch=plan.original_branch, head=plan.original_head
-            ),
-            executable_probe=lambda _runtime: (runtime.version, source),
-        )
-
-    assert ["git", "switch", "cursor-provider-deployed"] not in calls
-    assert not any(call[1:2] == ["branch"] for call in calls)
-
-
-def test_executor_revalidates_git_state_before_any_mutation(tmp_path: Path) -> None:
-    source = tmp_path / "hermes-agent"
-    source.mkdir()
-    executable = source / "venv/Scripts/hermes.exe"
-    executable.parent.mkdir(parents=True)
-    executable.write_bytes(b"launcher")
-    runtime = Runtime(
-        "windows-current",
-        ("cli",),
-        "windows",
-        tmp_path / "home",
-        source,
-        executable,
-        "0.20.5",
-        True,
-        "active",
-    )
-    manifest = InstallManifest(
-        version="0.1.0a1",
-        supported_hermes=("0.20.5",),
-        base_commits=("approved-head",),
-        artifacts={
-            "windows-x64": {
-                "filename": "bridge.tar.gz",
-                "sha256": "a" * 64,
-                "url": "https://example.invalid/bridge.tar.gz",
-            }
-        },
-        patch_series=(),
-    )
-    plan = build_install_plan(
-        runtime=runtime,
-        manifest=manifest,
-        profile="default",
-        git_state=GitState(clean=True, branch="main", head="approved-head"),
-        architecture="x64",
-    )
-    calls = []
-
-    with pytest.raises(InstallerError, match="changed after approval"):
-        execute_install_plan(
-            plan,
-            package_root=tmp_path,
-            approved=True,
-            run=lambda args, _cwd, _interactive=False: calls.append(args),
-            git_probe=lambda _root: GitState(
-                clean=False,
-                branch="main",
-                head="different-head",
-            ),
-            executable_probe=lambda _runtime: (runtime.version, source),
-        )
-
-    assert calls == []
-
-    executable.write_bytes(b"replaced executable")
-    with pytest.raises(InstallerError, match="executable changed after approval"):
-        execute_install_plan(
-            plan,
-            package_root=tmp_path,
-            approved=True,
-            run=lambda args, _cwd, _interactive=False: calls.append(args),
-            git_probe=lambda _root: GitState(
-                clean=True,
-                branch=plan.original_branch,
-                head=plan.original_head,
-            ),
-            executable_probe=lambda _runtime: (runtime.version, source),
-        )
-
-    assert calls == []
-
-
-def test_branch_creation_interrupt_restores_original_branch(tmp_path: Path) -> None:
-    source = tmp_path / "hermes-agent"
-    source.mkdir()
-    executable = source / "venv/Scripts/hermes.exe"
-    executable.parent.mkdir(parents=True)
-    executable.write_bytes(b"launcher")
-    runtime = Runtime(
-        "windows-current",
-        ("cli",),
-        "windows",
-        tmp_path / "home",
-        source,
-        executable,
-        "0.20.5",
-        True,
-        "active",
-    )
-    manifest = InstallManifest(
-        version="0.1.0a1",
-        supported_hermes=("0.20.5",),
-        base_commits=("base",),
-        artifacts={
-            "windows-x64": {
-                "filename": "bridge.tar.gz",
-                "sha256": "a" * 64,
-                "url": "https://example.invalid/bridge.tar.gz",
-            }
-        },
-        patch_series=("0001.patch",),
-    )
-    plan = build_install_plan(
-        runtime=runtime,
-        manifest=manifest,
-        profile="default",
-        git_state=GitState(clean=True, branch="main", head="base"),
-        architecture="x64",
-    )
-    calls = []
-
-    def run(args: list[str], cwd: Path, interactive: bool = False) -> CommandResult:
-        calls.append(args)
-        if args[1:3] == ["show-ref", "--verify"]:
-            return CommandResult(1, "", "")
-        if args[1:4] == ["switch", "-c", "cursor-provider-deployed"]:
-            raise KeyboardInterrupt
-        return CommandResult(0, "", "")
-
-    with pytest.raises(KeyboardInterrupt):
-        execute_install_plan(
-            plan,
-            package_root=tmp_path,
-            approved=True,
-            run=run,
-            timestamp=lambda: "20260822-010000",
-            git_probe=lambda _root: GitState(
-                clean=True, branch=plan.original_branch, head=plan.original_head
-            ),
-            executable_probe=lambda _runtime: (runtime.version, source),
-        )
-
-    assert ["git", "branch", "backup/hermes-cursor-native-20260822-010000", "HEAD"] in calls
-    assert ["git", "switch", "main"] in calls
-
-
-def test_executor_restores_config_and_previous_bridge_on_keyboard_interrupt(
-    tmp_path: Path,
-) -> None:
-    source = tmp_path / "hermes-agent"
-    source.mkdir()
-    executable = source / "venv/Scripts/hermes.exe"
-    executable.parent.mkdir(parents=True)
-    executable.write_bytes(b"launcher")
-    home = tmp_path / "home"
-    config_path = home / "config.yaml"
-    config_path.parent.mkdir(parents=True)
-    config_path.write_text("model: old\n", encoding="utf-8")
-    old_bridge_root = home / "cursor-native/bridge/0.1.0a1"
-    old_bridge_root.mkdir(parents=True)
-    (old_bridge_root / "old.txt").write_text("old bridge", encoding="utf-8")
-    runtime = Runtime(
-        "windows-current",
-        ("cli",),
-        "windows",
-        home,
-        source,
-        executable,
-        "0.20.5",
-        True,
-        "active",
-    )
-    archive = _archive("bridge/bin/cursor-sdk-bridge.exe", b"new bridge")
-    import hashlib
-
-    manifest = InstallManifest(
-        version="0.1.0a1",
-        supported_hermes=("0.20.5",),
-        base_commits=("base",),
-        artifacts={
-            "windows-x64": {
-                "filename": "bridge.tar.gz",
-                "sha256": hashlib.sha256(archive).hexdigest(),
-                "url": "https://example.invalid/bridge.tar.gz",
-            }
-        },
-        patch_series=("0001.patch",),
-    )
-    patch_root = tmp_path / "package/patches/hermes/0.20.5"
-    patch_root.mkdir(parents=True)
-    (patch_root / "0001.patch").write_text("patch", encoding="utf-8")
-    plan = build_install_plan(
-        runtime=runtime,
-        manifest=manifest,
-        profile="default",
-        git_state=GitState(clean=True, branch="main", head="base"),
-        architecture="x64",
-    )
-    calls = []
-    patched = [False]
-
-    def run(args: list[str], cwd: Path, interactive: bool = False) -> CommandResult:
-        calls.append(args)
-        if args[1:3] == ["show-ref", "--verify"]:
-            return CommandResult(1, "", "")
         if args[-2:] == ["config", "path"]:
-            return CommandResult(0, str(config_path), "")
-        if args[1:3] == ["config", "set"]:
-            raise KeyboardInterrupt
-        if args[1:2] == ["am"]:
-            patched[0] = True
+            config = home / "config.yaml"
+            config.parent.mkdir(parents=True, exist_ok=True)
+            return CommandResult(0, str(config), "")
+        if args[1:4] == ["config", "set", "model.provider"]:
+            raise AssertionError("additive install must not switch default model")
+        if args[-3:] == ["auth", "status", "cursor"]:
+            return CommandResult(0, "cursor: logged out\n", "")
+        if args[1:] == ["--version"]:
+            return CommandResult(0, "Hermes Agent v0.21.1\n", "")
         return CommandResult(0, "", "")
 
-    with pytest.raises(KeyboardInterrupt):
-        execute_install_plan(
+    def fake_receipt(runtime, *, bridge_path, notes=()):
+        return InstallReceipt(
+            host="test",
+            runtime_id=runtime.runtime_id,
+            hermes_version=runtime.version,
+            hermes_home=str(runtime.home),
+            plugin_path=str(runtime.home / "plugins/model-providers/cursor"),
+            plugin_installed=True,
+            bridge_path=str(bridge_path),
+            bridge_installed=True,
+            auth_status="logged out",
+            auth_source="",
+            model_catalog_count=None,
+            model_catalog_error="",
+            chat_probe="skipped_logged_out",
+            contract_checks={
+                "plugin_seam": True,
+                "provider_client_seam": True,
+                "plugin_registered": True,
+                "client_contract": True,
+            },
+            notes=notes,
+        )
+
+    import hermes_cursor_native.installer as installer_mod
+
+    original = installer_mod.collect_receipt
+    installer_mod.collect_receipt = fake_receipt
+    try:
+        result = execute_install_plan(
             plan,
-            package_root=tmp_path / "package",
+            package_root=package,
             approved=True,
             run=run,
-            download=lambda _url: archive,
-            timestamp=lambda: "20260822-010000",
-            provider_validator=lambda _root, _hashes: patched[0],
-            git_probe=lambda _root: GitState(
-                clean=True, branch=plan.original_branch, head=plan.original_head
-            ),
-            executable_probe=lambda _runtime: (runtime.version, source),
+            download=lambda _url: archive.getvalue(),
+            executable_probe=lambda _runtime: ("0.21.1", source),
         )
+    finally:
+        installer_mod.collect_receipt = original
 
-    assert config_path.read_text(encoding="utf-8") == "model: old\n"
-    assert (old_bridge_root / "old.txt").read_text(encoding="utf-8") == "old bridge"
-    assert ["git", "am", "--abort"] not in calls
-    assert ["git", "switch", "main"] in calls
-
-
-def test_executor_removes_new_config_and_bridge_on_keyboard_interrupt(tmp_path: Path) -> None:
-    source = tmp_path / "hermes-agent"
-    source.mkdir()
-    executable = source / "venv/Scripts/hermes.exe"
-    executable.parent.mkdir(parents=True)
-    executable.write_bytes(b"launcher")
-    home = tmp_path / "home"
-    config_path = home / "config.yaml"
-    runtime = Runtime(
-        "windows-current",
-        ("cli",),
-        "windows",
-        home,
-        source,
-        executable,
-        "0.20.5",
-        True,
-        "active",
-    )
-    archive = _archive("bridge/bin/cursor-sdk-bridge.exe", b"new bridge")
-    import hashlib
-
-    manifest = InstallManifest(
-        version="0.1.0a1",
-        supported_hermes=("0.20.5",),
-        base_commits=("base",),
-        artifacts={
-            "windows-x64": {
-                "filename": "bridge.tar.gz",
-                "sha256": hashlib.sha256(archive).hexdigest(),
-                "url": "https://example.invalid/bridge.tar.gz",
-            }
-        },
-        patch_series=("0001.patch",),
-    )
-    patch_root = tmp_path / "package/patches/hermes/0.20.5"
-    patch_root.mkdir(parents=True)
-    (patch_root / "0001.patch").write_text("patch", encoding="utf-8")
-    plan = build_install_plan(
-        runtime=runtime,
-        manifest=manifest,
-        profile="default",
-        git_state=GitState(clean=True, branch="main", head="base"),
-        architecture="x64",
-    )
-    calls = []
-    patched = [False]
-
-    def run(args: list[str], cwd: Path, interactive: bool = False) -> CommandResult:
-        calls.append(args)
-        if args[1:3] == ["show-ref", "--verify"]:
-            return CommandResult(1, "", "")
-        if args[-2:] == ["config", "path"]:
-            return CommandResult(0, str(config_path), "")
-        if args[1:2] == ["am"]:
-            patched[0] = True
-        if args[1:3] == ["config", "set"]:
-            config_path.parent.mkdir(parents=True, exist_ok=True)
-            config_path.write_text("created-by-install\n", encoding="utf-8")
-        if args[1:3] == ["cursor", "login"]:
-            raise KeyboardInterrupt
-        return CommandResult(0, "", "")
-
-    with pytest.raises(KeyboardInterrupt):
-        execute_install_plan(
-            plan,
-            package_root=tmp_path / "package",
-            approved=True,
-            run=run,
-            download=lambda _url: archive,
-            timestamp=lambda: "20260822-010000",
-            provider_validator=lambda _root, _hashes: patched[0],
-            git_probe=lambda _root: GitState(
-                clean=True, branch=plan.original_branch, head=plan.original_head
-            ),
-            executable_probe=lambda _runtime: (runtime.version, source),
-        )
-
-    assert not config_path.exists()
-    assert not (home / "cursor-native/bridge/0.1.0a1").exists()
-
-
-@pytest.mark.parametrize("detached", [False, True])
-def test_real_git_fresh_branch_failure_restores_inventory(
-    tmp_path: Path, detached: bool
-) -> None:
-    source = tmp_path / "hermes-agent"
-    source.mkdir()
-
-    def git(*args: str) -> str:
-        result = subprocess.run(
-            ["git", "-C", str(source), *args],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return result.stdout.strip()
-
-    git("init", "-b", "main")
-    git("config", "user.name", "Hermes Cursor Native Test")
-    git("config", "user.email", "test@example.invalid")
-    executable = source / "venv/Scripts/hermes.exe"
-    executable.parent.mkdir(parents=True)
-    executable.write_bytes(b"launcher")
-    git("add", ".")
-    git("commit", "-m", "base")
-    head = git("rev-parse", "HEAD")
-    if detached:
-        git("checkout", "--detach", head)
-    approved_git = probe_git_state(source)
-
-    runtime = Runtime(
-        "windows-current",
-        ("cli",),
-        "windows",
-        tmp_path / "home",
-        source,
-        executable,
-        "0.20.5",
-        True,
-        "active",
-    )
-    manifest = InstallManifest(
-        version="0.1.0a1",
-        supported_hermes=("0.20.5",),
-        base_commits=(head,),
-        artifacts={
-            "windows-x64": {
-                "filename": "bridge.tar.gz",
-                "sha256": "a" * 64,
-                "url": "https://example.invalid/bridge.tar.gz",
-            }
-        },
-        patch_series=(),
-    )
-    plan = build_install_plan(
-        runtime=runtime,
-        manifest=manifest,
-        profile="default",
-        git_state=approved_git,
-        architecture="x64",
-    )
-
-    with pytest.raises(KeyboardInterrupt):
-        execute_install_plan(
-            plan,
-            package_root=tmp_path,
-            approved=True,
-            download=lambda _url: (_ for _ in ()).throw(KeyboardInterrupt()),
-            timestamp=lambda: "20260822-010000",
-            provider_validator=lambda _root, _hashes: True,
-            executable_probe=lambda _runtime: (runtime.version, source),
-        )
-
-    assert git("branch", "--show-current") == ("" if detached else "main")
-    assert git("rev-parse", "HEAD") == head
-    branches = set(git("branch", "--format=%(refname:short)").splitlines())
-    assert "cursor-provider-deployed" not in branches
-    assert "backup/hermes-cursor-native-20260822-010000" in branches
-
-
-def test_existing_deployment_branch_ref_is_restored_after_failure(tmp_path: Path) -> None:
-    source = tmp_path / "hermes-agent"
-    source.mkdir()
-    executable = source / "venv/Scripts/hermes.exe"
-    executable.parent.mkdir(parents=True)
-    executable.write_bytes(b"launcher")
-    runtime = Runtime(
-        "windows-current",
-        ("cli",),
-        "windows",
-        tmp_path / "home",
-        source,
-        executable,
-        "0.20.5",
-        True,
-        "active",
-    )
-    manifest = InstallManifest(
-        version="0.1.0a1",
-        supported_hermes=("0.20.5",),
-        base_commits=("base",),
-        artifacts={
-            "windows-x64": {
-                "filename": "bridge.tar.gz",
-                "sha256": "a" * 64,
-                "url": "https://example.invalid/bridge.tar.gz",
-            }
-        },
-        patch_series=("0001.patch",),
-    )
-    patch_root = tmp_path / "patches/hermes/0.20.5"
-    patch_root.mkdir(parents=True)
-    (patch_root / "0001.patch").write_text("patch", encoding="utf-8")
-    plan = build_install_plan(
-        runtime=runtime,
-        manifest=manifest,
-        profile="default",
-        git_state=GitState(clean=True, branch="main", head="base"),
-        architecture="x64",
-    )
-    calls = []
-    patched = [False]
-
-    def run(args: list[str], cwd: Path, interactive: bool = False) -> CommandResult:
-        calls.append(args)
-        if args[1:3] == ["show-ref", "--verify"]:
-            return CommandResult(0, "", "")
-        if args[1:] == ["rev-parse", "HEAD"]:
-            return CommandResult(0, "base\n", "")
-        if args[1:] == ["rev-parse", "cursor-provider-deployed"]:
-            return CommandResult(0, "base\n", "")
-        if args[1:2] == ["am"]:
-            patched[0] = True
-        return CommandResult(0, "", "")
-
-    with pytest.raises(KeyboardInterrupt):
-        execute_install_plan(
-            plan,
-            package_root=tmp_path,
-            approved=True,
-            run=run,
-            download=lambda _url: (_ for _ in ()).throw(KeyboardInterrupt()),
-            provider_validator=lambda _root, _hashes: patched[0],
-            git_probe=lambda _root: GitState(clean=True, branch="main", head="base"),
-            executable_probe=lambda _runtime: (runtime.version, source),
-        )
-
-    assert ["git", "switch", "main"] in calls
-    assert ["git", "branch", "-f", "cursor-provider-deployed", "base"] in calls
+    assert result.bridge_path.is_file()
+    assert result.plugin_path.is_dir()

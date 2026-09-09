@@ -113,7 +113,12 @@ class RuntimeDiscovery:
             source_root = probe.source_root or primary.source_root
             executable = probe.executable or primary.executable
             home = primary.home
-            if source_root is not None:
+            for candidate, _probe in group:
+                candidate_home = Path(candidate.home)
+                if (candidate_home / "config.yaml").is_file():
+                    home = candidate.home
+                    break
+            if not (Path(home) / "config.yaml").is_file() and source_root is not None:
                 home = (
                     source_root.parent
                     if isinstance(source_root, Path)

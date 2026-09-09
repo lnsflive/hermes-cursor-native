@@ -1,17 +1,115 @@
-"""Runtime capability probes for Hermes Cursor Native.
-
-Install planning keys off interface checks (provider plugin seam, custom client
-hooks, streaming rails) rather than an exact Hermes version string.
-"""
+"""Behavioral capability probes for Hermes Cursor Native."""
 
 from __future__ import annotations
 
-import inspect
+import json
+import os
+import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from .discovery import Runtime
+
+
+def _package_data_root() -> Path:
+    from .manifest import package_data_root
+
+    return package_data_root()
+
+
+def _deploy_plugin(package_root: Path, hermes_home: Path) -> Path:
+    source = package_root / "plugin" / "model-providers" / "cursor"
+    destination = hermes_home / "plugins" / "model-providers" / "cursor"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists():
+        shutil.rmtree(destination)
+    shutil.copytree(source, destination)
+    return destination
+
+_INTERFACE_PROBE = """
+import json
+import sys
+
+report = {
+    "plugin_seam": False,
+    "provider_client_seam": False,
+    "errors": [],
+}
+
+try:
+    from providers.base import ProviderProfile
+
+    method = getattr(ProviderProfile, "create_client", None)
+    report["plugin_seam"] = callable(method)
+except Exception as exc:
+    report["errors"].append(f"plugin_seam: {exc}")
+
+try:
+    from agent.agent_runtime_helpers import _provider_supplied_client
+    from providers.base import ProviderProfile
+    from types import SimpleNamespace
+    import providers as providers_mod
+
+    class _ProbeClient:
+        HERMES_SKIP_TRANSPORT_WRAP = True
+        HERMES_SKIP_ASYNC_WRAP = True
+
+    class _ProbeProfile(ProviderProfile):
+        def create_client(self, **kwargs):
+            return _ProbeClient()
+
+    providers_mod.register_provider(
+        _ProbeProfile(
+            name="cursor-probe",
+            aliases=("cursor-probe",),
+            base_url="sdkbridge://cursor-probe",
+        )
+    )
+    agent = SimpleNamespace(provider="cursor-probe", _client_log_context=lambda: "")
+    client = _provider_supplied_client(agent, {"api_key": "probe"})
+    report["provider_client_seam"] = client is not None
+except Exception as exc:
+    report["errors"].append(f"provider_client_seam: {exc}")
+
+print(json.dumps(report))
+"""
+
+_PLUGIN_PROBE = """
+import json
+import os
+import sys
+from pathlib import Path
+
+home = Path(os.environ["HERMES_HOME"])
+report = {
+    "plugin_registered": False,
+    "create_client": False,
+    "skip_flags": False,
+    "errors": [],
+}
+
+try:
+    import providers as providers_mod
+
+    providers_mod._discover_providers()
+    profile = providers_mod.get_provider_profile("cursor")
+    report["plugin_registered"] = profile is not None
+    if profile is None:
+        raise RuntimeError("cursor provider not registered")
+
+    client = profile.create_client(api_key="probe", base_url=profile.base_url)
+    report["create_client"] = client is not None
+    report["skip_flags"] = bool(
+        getattr(client, "HERMES_SKIP_TRANSPORT_WRAP", False)
+        and getattr(client, "HERMES_SKIP_ASYNC_WRAP", False)
+    )
+except Exception as exc:
+    report["errors"].append(str(exc))
+
+print(json.dumps(report))
+"""
 
 
 @dataclass(frozen=True)
@@ -22,141 +120,171 @@ class CapabilityReport:
     hermes_version: str
     source_root: Path | None
     plugin_seam: bool
-    provider_supplied_client: bool
-    streaming_sdkbridge_rail: bool
-    cursor_bridge_config: bool
+    provider_client_seam: bool
+    plugin_registered: bool
+    client_contract: bool
     notes: tuple[str, ...] = field(default_factory=tuple)
 
     @property
-    def plugin_ready(self) -> bool:
-        """Enough surface exists to install via the model-provider plugin path."""
-        return self.plugin_seam and self.provider_supplied_client
+    def interface_ready(self) -> bool:
+        return self.plugin_seam and self.provider_client_seam
 
     @property
-    def fully_ready(self) -> bool:
-        """Plugin path plus core rails that keep Cursor turns stable."""
-        return self.plugin_ready and self.streaming_sdkbridge_rail
+    def plugin_ready(self) -> bool:
+        return self.interface_ready and self.plugin_registered and self.client_contract
 
     def blockers(self) -> list[str]:
         items: list[str] = []
         if not self.plugin_seam:
-            items.append("ProviderProfile.create_client seam missing")
-        if not self.provider_supplied_client:
-            items.append("agent runtime does not consult provider-supplied clients")
-        if not self.streaming_sdkbridge_rail:
-            items.append("turn streaming rail does not exclude sdkbridge:// transports")
+            items.append("ProviderProfile.create_client is not available")
+        if not self.provider_client_seam:
+            items.append("Hermes does not route provider-supplied clients")
+        if self.interface_ready and not self.plugin_registered:
+            items.append("cursor model-provider plugin is not registered")
+        if self.plugin_registered and not self.client_contract:
+            items.append("cursor plugin client failed contract checks")
         return items
 
 
-def _read_text(path: Path) -> str:
+def resolve_hermes_python(runtime: Runtime) -> Path | None:
+    """Locate the Hermes venv python for a runtime, including wrapper launchers."""
+
+    if runtime.executable is not None:
+        sibling = Path(runtime.executable).resolve().parent / "python"
+        if sibling.is_file():
+            return sibling
+    if runtime.source_root is not None:
+        venv_python = Path(runtime.source_root) / "venv" / "bin" / "python"
+        if venv_python.is_file():
+            return venv_python
+    return None
+
+
+def _hermes_python(runtime: Runtime) -> Path | None:
+    return resolve_hermes_python(runtime)
+
+
+def _hermes_source(runtime: Runtime) -> Path | None:
+    if runtime.source_root is not None and Path(runtime.source_root).is_dir():
+        return Path(runtime.source_root)
+    if runtime.executable is None:
+        return None
+    exe = Path(runtime.executable).resolve()
+    for parent in exe.parents:
+        if (parent / "providers" / "base.py").is_file():
+            return parent
+    return None
+
+
+def _run_probe(python: Path, source_root: Path, script: str, *, env: dict[str, str]) -> dict:
+    completed = subprocess.run(
+        [str(python), "-c", script],
+        cwd=source_root,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip() or f"exit {completed.returncode}"
+        raise RuntimeError(detail)
+    return json.loads(completed.stdout.strip() or "{}")
+
+
+def _probe_version(runtime: Runtime) -> str:
+    version = runtime.version
+    if runtime.executable is None:
+        return version
     try:
-        return path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return ""
+        completed = subprocess.run(
+            [str(runtime.executable), "--version"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=False,
+        )
+        if completed.returncode == 0:
+            for line in f"{completed.stdout}\n{completed.stderr}".splitlines():
+                if "Hermes Agent v" in line:
+                    return line.split("Hermes Agent v", 1)[1].split()[0]
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return version
 
 
-def _probe_via_source(source_root: Path | None) -> CapabilityReport:
-    version = ""
+def probe_runtime(
+    runtime: Runtime,
+    *,
+    package_root: Path | None = None,
+    hermes_home: Path | None = None,
+) -> CapabilityReport:
+    """Probe interfaces by importing Hermes modules and exercising the plugin seam."""
+    source_root = _hermes_source(runtime)
+    python = _hermes_python(runtime)
     notes: list[str] = []
     plugin_seam = False
-    provider_supplied_client = False
-    streaming_sdkbridge_rail = False
-    cursor_bridge_config = False
+    provider_client_seam = False
+    plugin_registered = False
+    client_contract = False
 
-    if source_root is None:
+    if source_root is None or python is None:
+        notes.append("could not locate Hermes source checkout or python interpreter")
         return CapabilityReport(
-            runtime_id="unknown",
-            hermes_version=version,
-            source_root=None,
+            runtime_id=runtime.runtime_id,
+            hermes_version=_probe_version(runtime),
+            source_root=source_root,
             plugin_seam=False,
-            provider_supplied_client=False,
-            streaming_sdkbridge_rail=False,
-            cursor_bridge_config=False,
-            notes=("no source checkout to inspect",),
+            provider_client_seam=False,
+            plugin_registered=False,
+            client_contract=False,
+            notes=tuple(notes),
         )
 
-    base = Path(source_root)
-    providers_base = _read_text(base / "providers" / "base.py")
-    plugin_seam = "def create_client" in providers_base
+    env = os.environ.copy()
+    home = hermes_home or Path(runtime.home)
+    env["HERMES_HOME"] = str(home)
+    env["PYTHONPATH"] = str(source_root)
 
-    runtime_helpers = _read_text(base / "agent" / "agent_runtime_helpers.py")
-    provider_supplied_client = "_provider_supplied_client" in runtime_helpers
+    try:
+        interface = _run_probe(python, source_root, _INTERFACE_PROBE, env=env)
+        plugin_seam = bool(interface.get("plugin_seam"))
+        provider_client_seam = bool(interface.get("provider_client_seam"))
+        for error in interface.get("errors", []):
+            notes.append(str(error))
+    except (RuntimeError, json.JSONDecodeError) as exc:
+        notes.append(f"interface probe failed: {exc}")
 
-    turn_api = _read_text(base / "agent" / "turn_api_call.py")
-    conversation = _read_text(base / "agent" / "conversation_loop.py")
-    streaming_sdkbridge_rail = (
-        "sdkbridge://" in turn_api
-        or '"cursor"' in turn_api
-        or "sdkbridge://" in conversation
-        or '"cursor"' in conversation
-    )
-
-    defaults = _read_text(base / "hermes_cli" / "config_defaults.py")
-    cursor_bridge_config = '"cursor_bridge"' in defaults
-
-    if not plugin_seam:
-        notes.append("upgrade Hermes or use a release with model-provider plugins")
-    if plugin_seam and not provider_supplied_client:
-        notes.append("provider plugins register but primary client seam is absent")
-    if not streaming_sdkbridge_rail:
-        notes.append(
-            "sdkbridge streaming exclusion missing; turns may mis-stream until core catches up"
-        )
-
-    return CapabilityReport(
-        runtime_id="inspected",
-        hermes_version=version,
-        source_root=base,
-        plugin_seam=plugin_seam,
-        provider_supplied_client=provider_supplied_client,
-        streaming_sdkbridge_rail=streaming_sdkbridge_rail,
-        cursor_bridge_config=cursor_bridge_config,
-        notes=tuple(notes),
-    )
-
-
-def probe_runtime(runtime: Runtime) -> CapabilityReport:
-    """Inspect the runtime's Hermes checkout and version output."""
-    version = runtime.version
-    report = _probe_via_source(
-        Path(runtime.source_root) if runtime.source_root is not None else None
-    )
-    if runtime.executable is not None:
-        try:
-            completed = subprocess.run(
-                [str(runtime.executable), "--version"],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=30,
-                check=False,
-            )
-            if completed.returncode == 0:
-                for line in f"{completed.stdout}\n{completed.stderr}".splitlines():
-                    if "Hermes Agent v" in line:
-                        version = line.split("Hermes Agent v", 1)[1].split()[0]
-                        break
-        except (OSError, subprocess.TimeoutExpired):
-            pass
+    if interface_ready := (plugin_seam and provider_client_seam):
+        root = package_root or _package_data_root()
+        with tempfile.TemporaryDirectory(prefix="hermes-cursor-probe-") as tmp:
+            probe_home = Path(tmp)
+            _deploy_plugin(root, probe_home)
+            probe_env = dict(env)
+            probe_env["HERMES_HOME"] = str(probe_home)
+            try:
+                plugin = _run_probe(python, source_root, _PLUGIN_PROBE, env=probe_env)
+                plugin_registered = bool(plugin.get("plugin_registered"))
+                client_contract = bool(plugin.get("create_client") and plugin.get("skip_flags"))
+                for error in plugin.get("errors", []):
+                    notes.append(str(error))
+            except (RuntimeError, json.JSONDecodeError) as exc:
+                notes.append(f"plugin probe failed: {exc}")
+    else:
+        notes.append("skipped plugin registration probe because core seams are missing")
 
     return CapabilityReport(
         runtime_id=runtime.runtime_id,
-        hermes_version=version or runtime.version,
-        source_root=report.source_root,
-        plugin_seam=report.plugin_seam,
-        provider_supplied_client=report.provider_supplied_client,
-        streaming_sdkbridge_rail=report.streaming_sdkbridge_rail,
-        cursor_bridge_config=report.cursor_bridge_config,
-        notes=report.notes,
+        hermes_version=_probe_version(runtime),
+        source_root=source_root,
+        plugin_seam=plugin_seam,
+        provider_client_seam=provider_client_seam,
+        plugin_registered=plugin_registered if interface_ready else False,
+        client_contract=client_contract if interface_ready else False,
+        notes=tuple(notes),
     )
 
-
-def provider_profile_create_client_callable() -> bool:
-    """True when the installed hermes_cursor_native environment can import the seam."""
-    try:
-        from providers.base import ProviderProfile  # type: ignore[import-not-found]
-
-        return callable(getattr(ProviderProfile, "create_client", None))
-    except Exception:
-        return False

@@ -143,12 +143,19 @@ def collect_candidates(
     path_executable = which_hermes()
     if path_executable is not None:
         source_root = infer_source_root(path_executable)
+        user_hermes = Path.home() / ".hermes"
+        if exists(user_hermes):
+            home = user_hermes
+        elif source_root is not None:
+            home = source_root.parent
+        else:
+            home = Path.home()
         candidates.append(
             Candidate(
                 "path-hermes",
                 "cli",
                 platform_name,
-                source_root.parent if source_root else Path.home(),
+                home,
                 source_root,
                 path_executable,
                 True,

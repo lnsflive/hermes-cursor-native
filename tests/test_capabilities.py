@@ -2,27 +2,30 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from hermes_cursor_native.capabilities import probe_runtime
 from hermes_cursor_native.discovery import Runtime
 
+HERMES_SOURCE = Path("/root/.hermes/hermes-agent")
 
-def test_live_hermes_0211_reports_plugin_seam_without_sdkbridge_rail() -> None:
-    source = Path("/root/.hermes/hermes-agent")
-    if not (source / "providers" / "base.py").is_file():
-        return
+
+@pytest.mark.skipif(not HERMES_SOURCE.is_dir(), reason="stock Hermes checkout not present")
+def test_live_stock_hermes_passes_behavioral_capability_probe() -> None:
     runtime = Runtime(
-        runtime_id="posix-current",
-        surfaces=("cli",),
-        platform="linux",
-        home=Path("/root/.hermes"),
-        source_root=source,
-        executable=source / "venv/bin/hermes",
-        version="0.21.1",
-        usable=True,
-        status="active",
+        "posix-current",
+        ("cli",),
+        "linux",
+        Path("/root/.hermes"),
+        HERMES_SOURCE,
+        HERMES_SOURCE / "venv/bin/hermes",
+        "0.21.1",
+        True,
+        "active",
     )
     report = probe_runtime(runtime)
     assert report.plugin_seam is True
-    assert report.provider_supplied_client is True
+    assert report.provider_client_seam is True
+    assert report.plugin_registered is True
+    assert report.client_contract is True
     assert report.plugin_ready is True
-    assert report.streaming_sdkbridge_rail is False

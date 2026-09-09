@@ -3,6 +3,8 @@
 from providers import register_provider
 from providers.base import ProviderProfile
 
+from .auth_shim import install_auth_shim
+
 
 class CursorProfile(ProviderProfile):
     """Cursor subscription — local sdk.v1 bridge subprocess, no REST catalog."""
@@ -20,7 +22,12 @@ class CursorProfile(ProviderProfile):
         timeout: float = 8.0,
     ) -> list[str] | None:
         del base_url, timeout
-        if not api_key:
+        from .cursor_sdk_auth import resolve_cursor_api_key
+
+        resolved_key = (api_key or "").strip()
+        if not resolved_key:
+            resolved_key, _source = resolve_cursor_api_key()
+        if not resolved_key:
             return None
         try:
             from .cursor_bridge_client import CursorBridgeClient
@@ -28,7 +35,7 @@ class CursorProfile(ProviderProfile):
 
             if not resolve_bridge_command():
                 return None
-            client = CursorBridgeClient(api_key=api_key)
+            client = CursorBridgeClient(api_key=resolved_key)
             try:
                 models = client.list_models()
             finally:
@@ -38,6 +45,8 @@ class CursorProfile(ProviderProfile):
         except Exception:
             return None
 
+
+install_auth_shim()
 
 cursor = CursorProfile(
     name="cursor",

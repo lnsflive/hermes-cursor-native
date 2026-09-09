@@ -5,7 +5,7 @@ Use Composer 2.5, Grok 4.6, Claude, GPT, Gemini, and your full Cursor model cata
 **Browser OAuth · official Cursor SDK bridge · Hermes-owned tools · profiles and gateways · Windows-first alpha**
 
 > [!WARNING]
-> This repository is an early alpha. Version `0.1.0a1` supports a tested Hermes 0.20.5 patch path. Run discovery and `install --dry-run` before applying anything.
+> Early alpha. This repository ships a **standalone Hermes model-provider plugin** plus bridge installer. It does not patch Hermes core. Run `discover` and `install --dry-run` before applying anything.
 
 Hermes Cursor Native is independent and community-maintained. It is not affiliated with or endorsed by Nous Research or Cursor/Anysphere.
 
@@ -31,9 +31,9 @@ Hermes profile
 - Structured Hermes-owned tool execution
 - Profile, gateway, cron, memory, skills, plugin, and session compatibility
 - Runtime discovery across current Windows, legacy Windows, WSL, explicit source/Desktop overrides, and the checkout behind the active PATH launcher
-- Versioned patch series with original authorship preserved
+- Additive install into `$HERMES_HOME/plugins/model-providers/cursor`
 - Verified bridge downloads with SHA256 enforcement
-- Maintained deployment branch and rollback reference
+- Behavioral capability probes against stock Hermes (no exact version gate)
 
 ## Cursor-powered Hermes bots
 
