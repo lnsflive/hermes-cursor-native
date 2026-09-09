@@ -24,7 +24,7 @@ Hermes profile
 
 ## Capabilities
 
-- Browser PKCE OAuth via `hermes cursor login`
+- Browser PKCE OAuth via `hermes model` → Cursor
 - Full live Cursor account model catalog
 - Composer 2.5, Grok 4.6, and account-available Cursor models
 - Normal Hermes `model.provider=cursor`
@@ -34,6 +34,12 @@ Hermes profile
 - Additive install into `$HERMES_HOME/plugins/model-providers/cursor`
 - Verified bridge downloads with SHA256 enforcement
 - Behavioral capability probes against stock Hermes (no exact version gate)
+
+## Selecting Cursor
+
+After installing or updating the plugin, restart your Hermes process. Run `hermes model` and select **Cursor** near the bottom of the provider list. This opens browser OAuth when you are logged out, then fetches your account’s model catalog. Each OS user signs in separately.
+
+After authentication, Cursor models also appear in the in-chat `/model` picker and model inventory. Logged-out providers remain available in the setup menu; the authenticated model picker does not invent selectable placeholder models. Existing model defaults are preserved until you select a model.
 
 ## Cursor-powered Hermes bots
 

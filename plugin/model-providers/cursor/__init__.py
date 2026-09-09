@@ -3,7 +3,7 @@
 from providers import register_provider
 from providers.base import ProviderProfile
 
-from .auth_shim import install_auth_shim, sync_provider_auth_registry
+from .defer_hooks import install_defer_hooks
 
 
 class CursorProfile(ProviderProfile):
@@ -64,5 +64,4 @@ cursor = CursorProfile(
 )
 
 register_provider(cursor)
-sync_provider_auth_registry(cursor)
-install_auth_shim()
+install_defer_hooks()

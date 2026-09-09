@@ -32,6 +32,8 @@ def sync_provider_auth_registry(profile) -> bool:
     except Exception as exc:
         logger.debug("cursor auth registry sync unavailable: %s", exc)
         return False
+    if not hasattr(auth_mod, "PROVIDER_REGISTRY"):
+        return False
     if profile.name not in auth_mod.PROVIDER_REGISTRY:
         auth_mod._register_plugin_provider(profile)
     return profile.name in auth_mod.PROVIDER_REGISTRY
@@ -46,6 +48,8 @@ def install_auth_shim() -> bool:
         import hermes_cli.auth as auth_mod
     except Exception as exc:
         logger.debug("cursor auth shim unavailable: %s", exc)
+        return False
+    if not hasattr(auth_mod, "_resolve_api_key_provider_secret"):
         return False
 
     original = auth_mod._resolve_api_key_provider_secret
