@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -272,6 +273,9 @@ def execute_install_plan(
     config_backup: Path | None = None
     config_existed = False
     backup_root = Path(plan.runtime.home) / "cursor-native" / "backups" / stamp
+    plugin_backup: Path | None = None
+    plugin_mutated = False
+    plugin_path = Path(plan.runtime.home) / "plugins" / "model-providers" / "cursor"
     bridge_backup: Path | None = None
     bridge_mutated = False
     bridge_root = Path(plan.runtime.home) / "cursor-sdk-bridge"
@@ -279,6 +283,11 @@ def execute_install_plan(
     notes: list[str] = []
 
     try:
+        if plugin_path.exists() or plugin_path.is_symlink():
+            backup_root.mkdir(parents=True, exist_ok=True)
+            plugin_backup = Path(tempfile.mkdtemp(prefix="plugin-", dir=backup_root)) / "cursor"
+            plugin_path.rename(plugin_backup)
+        plugin_mutated = True
         plugin_path = deploy_plugin(package_root, Path(plan.runtime.home))
 
         payload = download(plan.artifact["url"])
@@ -350,6 +359,16 @@ def execute_install_plan(
                     shutil.move(str(bridge_backup), str(bridge_root))
             except OSError as rollback_exc:
                 rollback_errors.append(f"bridge restore failed: {rollback_exc}")
+        if plugin_mutated:
+            try:
+                if plugin_path.is_symlink() or plugin_path.is_file():
+                    plugin_path.unlink()
+                elif plugin_path.exists():
+                    shutil.rmtree(plugin_path)
+                if plugin_backup is not None:
+                    plugin_backup.rename(plugin_path)
+            except OSError as rollback_exc:
+                rollback_errors.append(f"plugin restore failed: {rollback_exc}")
         if rollback_errors:
             raise InstallerError("; ".join(rollback_errors)) from exc
         raise

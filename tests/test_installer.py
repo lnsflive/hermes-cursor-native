@@ -13,6 +13,7 @@ from hermes_cursor_native.install_plan import build_install_plan
 from hermes_cursor_native.installer import (
     ApprovalRequiredError,
     CommandResult,
+    InstallerError,
     deploy_plugin,
     execute_install_plan,
     require_approval,
@@ -54,7 +55,11 @@ def test_deploy_plugin_copies_bundle(tmp_path: Path) -> None:
     assert (destination / "plugin.yaml").is_file()
 
 
-def test_execute_install_plan_plugin_mode(tmp_path: Path) -> None:
+@pytest.mark.parametrize("existing", [False, True])
+@pytest.mark.parametrize("failure", [None, "copy", "checksum", "config", "contract"])
+def test_execute_install_plan_plugin_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, existing: bool, failure: str | None,
+) -> None:
     home = tmp_path / "home"
     source = tmp_path / "hermes-agent"
     source.mkdir()
@@ -119,14 +124,27 @@ def test_execute_install_plan_plugin_mode(tmp_path: Path) -> None:
         capability_report=capabilities,
     )
 
+    destination = home / "plugins/model-providers/cursor"
+    bridge_root = home / "cursor-sdk-bridge"
+    config = home / "config.yaml"
+    if existing:
+        destination.mkdir(parents=True)
+        (destination / "old.py").write_bytes(b"previous plugin")
+        bridge_root.mkdir()
+        (bridge_root / "old-bridge").write_bytes(b"previous bridge")
+        config.write_bytes(b"previous config")
+
     calls: list[list[str]] = []
 
     def run(args: list[str], cwd: Path, interactive: bool = False) -> CommandResult:
         calls.append(args)
         if args[-2:] == ["config", "path"]:
-            config = home / "config.yaml"
             config.parent.mkdir(parents=True, exist_ok=True)
             return CommandResult(0, str(config), "")
+        if args[1:3] == ["config", "set"]:
+            config.write_bytes(b"new config")
+            if failure == "config":
+                return CommandResult(1, "", "injected config failure")
         if args[1:4] == ["config", "set", "model.provider"]:
             raise AssertionError("additive install must not switch default model")
         if args[-3:] == ["auth", "status", "cursor"]:
@@ -154,26 +172,53 @@ def test_execute_install_plan_plugin_mode(tmp_path: Path) -> None:
                 "plugin_seam": True,
                 "provider_client_seam": True,
                 "plugin_registered": True,
-                "client_contract": True,
+                "client_contract": failure != "contract",
             },
             notes=notes,
         )
 
     import hermes_cursor_native.installer as installer_mod
 
-    original = installer_mod.collect_receipt
-    installer_mod.collect_receipt = fake_receipt
-    try:
-        result = execute_install_plan(
+    monkeypatch.setattr(installer_mod, "collect_receipt", fake_receipt)
+    if failure == "copy":
+        def failing_copy(source, target):
+            Path(target).mkdir(parents=True)
+            (Path(target) / "partial.py").write_bytes(b"incomplete")
+            raise OSError("injected copy failure")
+
+        monkeypatch.setattr(installer_mod.shutil, "copytree", failing_copy)
+
+    def install():
+        return execute_install_plan(
             plan,
             package_root=package,
             approved=True,
             run=run,
-            download=lambda _url: archive.getvalue(),
+            download=lambda _url: b"corrupted" if failure == "checksum" else archive.getvalue(),
             executable_probe=lambda _runtime: ("0.21.1", source),
         )
-    finally:
-        installer_mod.collect_receipt = original
 
-    assert result.bridge_path.is_file()
-    assert result.plugin_path.is_dir()
+    if failure:
+        expected = {
+            "copy": "injected copy failure",
+            "checksum": "SHA256 mismatch",
+            "config": "injected config failure",
+            "contract": "client contract checks failed",
+        }
+        with pytest.raises((InstallerError, OSError), match=expected[failure]):
+            install()
+        if existing:
+            assert {p.name: p.read_bytes() for p in destination.iterdir()} == {
+                "old.py": b"previous plugin",
+            }
+            assert (bridge_root / "old-bridge").read_bytes() == b"previous bridge"
+            assert config.read_bytes() == b"previous config"
+        else:
+            assert not destination.exists()
+            assert not bridge_root.exists()
+            assert not config.exists()
+    else:
+        result = install()
+        assert result.bridge_path.is_file()
+        assert (result.plugin_path / "plugin.yaml").is_file()
+        assert not (result.plugin_path / "old.py").exists()

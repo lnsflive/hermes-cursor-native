@@ -150,14 +150,20 @@ class CapabilityReport:
 def resolve_hermes_python(runtime: Runtime) -> Path | None:
     """Locate the Hermes venv python for a runtime, including wrapper launchers."""
 
+    names = ("python.exe", "python") if runtime.platform == "windows" else ("python", "python.exe")
+    candidates: list[Path] = []
     if runtime.executable is not None:
-        sibling = Path(runtime.executable).resolve().parent / "python"
-        if sibling.is_file():
-            return sibling
+        directory = Path(runtime.executable).resolve().parent
+        candidates.extend(directory / name for name in names)
     if runtime.source_root is not None:
-        venv_python = Path(runtime.source_root) / "venv" / "bin" / "python"
-        if venv_python.is_file():
-            return venv_python
+        for venv in ("venv", ".venv"):
+            for directory in ("Scripts", "bin"):
+                candidates.extend(
+                    Path(runtime.source_root) / venv / directory / name for name in names
+                )
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
     return None
 
 
