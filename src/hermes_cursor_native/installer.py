@@ -227,22 +227,35 @@ def run_cursor_oauth(
     hermes_home: Path,
     package_root: Path,
 ) -> None:
-    result = run([str(hermes), "cursor", "login"], source, True)
+    login = [str(hermes), "cursor", "login"]
+    probe = run(login, source, False)
+    if probe.returncode == 0:
+        return
+    if _cursor_login_unsupported(probe):
+        auth_script = (
+            hermes_home / "plugins" / "model-providers" / "cursor" / "cursor_sdk_auth.py"
+        )
+        if not auth_script.is_file():
+            auth_script = (
+                package_root / "plugin" / "model-providers" / "cursor" / "cursor_sdk_auth.py"
+            )
+        if not auth_script.is_file():
+            detail = probe.stderr.strip() or probe.stdout.strip() or f"exit {probe.returncode}"
+            raise InstallerError(
+                "Cursor OAuth failed: `hermes cursor login` is unavailable and the plugin "
+                f"auth script is missing ({detail})"
+            )
+        _checked(run, [sys.executable, str(auth_script)], source, True)
+        return
+    result = run(login, source, True)
     if result.returncode == 0:
         return
-    if not _cursor_login_unsupported(result):
-        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
-        raise InstallerError(f"Cursor OAuth failed: {detail}")
-    auth_script = hermes_home / "plugins" / "model-providers" / "cursor" / "cursor_sdk_auth.py"
-    if not auth_script.is_file():
-        auth_script = package_root / "plugin" / "model-providers" / "cursor" / "cursor_sdk_auth.py"
-    if not auth_script.is_file():
-        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
-        raise InstallerError(
-            "Cursor OAuth failed: `hermes cursor login` is unavailable and the plugin "
-            f"auth script is missing ({detail})"
-        )
-    _checked(run, [sys.executable, str(auth_script)], source, True)
+    detail = (
+        probe.stderr.strip() or probe.stdout.strip()
+        or result.stderr.strip() or result.stdout.strip()
+        or f"exit {result.returncode}"
+    )
+    raise InstallerError(f"Cursor OAuth failed: {detail}")
 
 
 def deploy_plugin(package_root: Path, hermes_home: Path) -> Path:

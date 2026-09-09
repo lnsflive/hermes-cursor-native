@@ -18,6 +18,7 @@ from hermes_cursor_native.installer import (
     deploy_plugin,
     execute_install_plan,
     require_approval,
+    run_command,
     run_cursor_oauth,
     safe_extract_tar,
     verify_sha256,
@@ -327,11 +328,38 @@ def test_run_cursor_oauth_surfaces_genuine_login_failure(tmp_path):
     home = tmp_path / "home"
     package = tmp_path / "package"
 
-    def run(_args, _cwd, _interactive=False):
-        return CommandResult(1, "", "login timed out")
+    def run(_args, _cwd, interactive=False):
+        if not interactive:
+            return CommandResult(1, "", "login timed out")
+        return CommandResult(1, "", "")
 
     with pytest.raises(InstallerError, match="Cursor OAuth failed: login timed out"):
         run_cursor_oauth(run, hermes, source, home, package)
+
+
+def test_run_cursor_oauth_probes_before_interactive_login(tmp_path, monkeypatch):
+    hermes = tmp_path / "hermes"
+    hermes.write_text(
+        "#!/bin/sh\n"
+        "if [ -t 0 ]; then exit 0; fi\n"
+        "echo \"Error: No such command 'cursor'.\" >&2\n"
+        "exit 2\n",
+        encoding="utf-8",
+    )
+    hermes.chmod(0o755)
+    source = tmp_path / "source"
+    source.mkdir()
+    home = tmp_path / "home"
+    package = tmp_path / "package"
+    auth_script = package / "plugin/model-providers/cursor/cursor_sdk_auth.py"
+    auth_script.parent.mkdir(parents=True)
+    auth_script.write_text("#!/usr/bin/env python3\nimport sys; sys.exit(0)\n", encoding="utf-8")
+    auth_script.chmod(0o755)
+
+    import hermes_cursor_native.installer as installer_mod
+
+    monkeypatch.setattr(installer_mod.sys, "executable", "/usr/bin/python3")
+    run_cursor_oauth(run_command, hermes, source, home, package)
 
 
 def test_run_cursor_oauth_falls_back_when_command_missing(tmp_path, monkeypatch):
@@ -345,9 +373,10 @@ def test_run_cursor_oauth_falls_back_when_command_missing(tmp_path, monkeypatch)
     auth_script.write_text("print('ok')\n", encoding="utf-8")
     calls: list[list[str]] = []
 
-    def run(args, _cwd, _interactive=False):
-        calls.append(args)
+    def run(args, _cwd, interactive=False):
+        calls.append((args, interactive))
         if args[-2:] == ["cursor", "login"]:
+            assert interactive is False
             return CommandResult(2, "", "Error: No such command 'cursor'.")
         return CommandResult(0, "", "")
 
@@ -356,5 +385,6 @@ def test_run_cursor_oauth_falls_back_when_command_missing(tmp_path, monkeypatch)
     monkeypatch.setattr(installer_mod.sys, "executable", "/usr/bin/python3")
     run_cursor_oauth(run, hermes, source, home, package)
     assert len(calls) == 2
-    assert calls[1][0] == "/usr/bin/python3"
-    assert calls[1][1].endswith("cursor_sdk_auth.py")
+    assert calls[0][1] is False
+    assert calls[1][0][0] == "/usr/bin/python3"
+    assert calls[1][0][1].endswith("cursor_sdk_auth.py")

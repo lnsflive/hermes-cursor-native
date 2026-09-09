@@ -136,6 +136,32 @@ def test_status_survives_python_probe_failures(tmp_path, monkeypatch, capsys):
     assert receipt["chat_probe"] == "runtime_probe_failed"
 
 
+def test_receipt_contract_probe_converts_launch_failures(tmp_path, monkeypatch):
+    import hermes_cursor_native.capabilities as capabilities
+
+    home = tmp_path / "home"
+    source = tmp_path / "source"
+    source.mkdir()
+    python = source / "python"
+    python.touch()
+    runtime = Runtime("test", ("cli",), "linux", home, source, source / "hermes",
+                      "test", True, "active")
+
+    def raise_oserror(*args, **kwargs):
+        raise OSError("python missing")
+
+    monkeypatch.setattr(capabilities, "_run_probe", raise_oserror)
+    monkeypatch.setattr(verify, "resolve_hermes_python", lambda _: python)
+    monkeypatch.setattr(verify, "_safe_auth_status", lambda *args: ("logged out", ""))
+    receipt = collect_receipt(runtime, bridge_path=None)
+    assert receipt.contract_checks == {
+        "plugin_seam": False,
+        "provider_client_seam": False,
+        "plugin_registered": False,
+        "client_contract": False,
+    }
+
+
 def test_status_survives_auth_probe_failure(tmp_path, monkeypatch, capsys):
     home = tmp_path / "home"
     home.mkdir()

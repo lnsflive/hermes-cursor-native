@@ -267,7 +267,7 @@ def probe_runtime(
         provider_client_seam = bool(interface.get("provider_client_seam"))
         for error in interface.get("errors", []):
             notes.append(str(error))
-    except (RuntimeError, json.JSONDecodeError) as exc:
+    except (OSError, RuntimeError, json.JSONDecodeError, subprocess.TimeoutExpired) as exc:
         notes.append(f"interface probe failed: {exc}")
 
     if interface_ready := (plugin_seam and provider_client_seam):
@@ -287,7 +287,7 @@ def probe_runtime(
                 client_contract = bool(plugin.get("create_client") and plugin.get("skip_flags"))
                 for error in plugin.get("errors", []):
                     notes.append(str(error))
-            except (RuntimeError, json.JSONDecodeError) as exc:
+            except (OSError, RuntimeError, json.JSONDecodeError, subprocess.TimeoutExpired) as exc:
                 notes.append(f"plugin probe failed: {exc}")
     else:
         notes.append("skipped plugin registration probe because core seams are missing")
