@@ -13,6 +13,8 @@ hermes plugins install https://github.com/lnsflive/hermes-cursor-native --enable
 hermes model
 ```
 
+Review Hermes’s plugin trust prompt during installation.
+
 Select **Cursor** near the bottom of the provider menu. Reuse an existing compatible credential, or sign in through the browser. If needed, setup offers to download the verified SDK bridge. Then choose a model from your account's live catalog.
 
 Restart any Hermes process that was already running before installing/updating. Run installation and login as the OS user who runs Hermes. Repeat for each machine or separate Hermes home you use.

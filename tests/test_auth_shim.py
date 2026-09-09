@@ -13,7 +13,7 @@ HERMES_SOURCE = Path(os.getenv("HERMES_AGENT_ROOT", str(Path.home() / ".hermes" 
 HERMES_PYTHON = HERMES_SOURCE / (
     ".venv/bin/python" if (HERMES_SOURCE / ".venv/bin/python").exists() else "venv/bin/python"
 )
-HERMES_BIN = HERMES_SOURCE / "venv/bin/hermes"
+HERMES_BIN = HERMES_PYTHON.parent / "hermes"
 PLUGIN_SRC = Path(__file__).resolve().parents[1] / "plugin" / "model-providers" / "cursor"
 
 

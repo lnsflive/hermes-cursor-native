@@ -36,7 +36,7 @@ def _ready_capabilities() -> CapabilityReport:
     return CapabilityReport(
         runtime_id="posix-current",
         hermes_version="0.21.1",
-        source_root=Path("/root/.hermes/hermes-agent"),
+        source_root=Path("fixture-source"),
         plugin_seam=True,
         provider_client_seam=True,
         plugin_registered=True,
@@ -44,23 +44,23 @@ def _ready_capabilities() -> CapabilityReport:
     )
 
 
-def _linux_runtime() -> Runtime:
+def _linux_runtime(root: Path) -> Runtime:
     return Runtime(
         "posix-current",
         ("cli",),
         "linux",
-        Path("/root/.hermes"),
-        Path("/root/.hermes/hermes-agent"),
-        Path("/root/.hermes/hermes-agent/venv/bin/hermes"),
+        root / "hermes-home",
+        root / "hermes-source",
+        root / "hermes-source/venv/bin/hermes",
         "0.21.1",
         True,
         "active",
     )
 
 
-def test_plan_is_plugin_only_and_additive_by_default() -> None:
+def test_plan_is_plugin_only_and_additive_by_default(tmp_path) -> None:
     plan = build_install_plan(
-        runtime=_linux_runtime(),
+        runtime=_linux_runtime(tmp_path),
         manifest=_manifest(),
         profile="default",
         architecture="x64",
@@ -81,11 +81,11 @@ def test_plan_is_plugin_only_and_additive_by_default() -> None:
     assert "auth.json" not in rendered
 
 
-def test_missing_capabilities_blocks_install() -> None:
+def test_missing_capabilities_blocks_install(tmp_path) -> None:
     blocked = CapabilityReport(
         runtime_id="posix-current",
         hermes_version="0.21.1",
-        source_root=Path("/root/.hermes/hermes-agent"),
+        source_root=Path("fixture-source"),
         plugin_seam=False,
         provider_client_seam=False,
         plugin_registered=False,
@@ -93,7 +93,7 @@ def test_missing_capabilities_blocks_install() -> None:
     )
     with pytest.raises(InstallBlockedError, match="not ready"):
         build_install_plan(
-            runtime=_linux_runtime(),
+            runtime=_linux_runtime(tmp_path),
             manifest=_manifest(),
             profile="default",
             architecture="x64",
@@ -123,8 +123,8 @@ def test_wsl_uses_linux_artifact() -> None:
     assert plan.artifact_key == "linux-x64"
 
 
-def test_cli_install_dry_run_emits_plan_without_applying(capsys, monkeypatch) -> None:
-    runtime = _linux_runtime()
+def test_cli_install_dry_run_emits_plan_without_applying(capsys, monkeypatch, tmp_path) -> None:
+    runtime = _linux_runtime(tmp_path)
     applied = []
     monkeypatch.setattr(
         "hermes_cursor_native.install_plan.probe_runtime",
