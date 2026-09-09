@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -8,8 +9,10 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROBE = REPO_ROOT / "tests/scripts/client_contract_probe.py"
-HERMES_SOURCE = Path("/root/.hermes/hermes-agent")
-HERMES_PYTHON = HERMES_SOURCE / "venv/bin/python"
+HERMES_SOURCE = Path(os.getenv("HERMES_AGENT_ROOT", str(Path.home() / ".hermes/hermes-agent")))
+HERMES_PYTHON = HERMES_SOURCE / (
+    ".venv/bin/python" if (HERMES_SOURCE / ".venv/bin/python").exists() else "venv/bin/python"
+)
 
 
 @pytest.mark.skipif(not HERMES_PYTHON.is_file(), reason="stock Hermes python not present")

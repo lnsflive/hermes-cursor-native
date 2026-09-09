@@ -13,7 +13,11 @@ from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PLUGIN_SRC = REPO_ROOT / "plugin" / "model-providers" / "cursor"
-HERMES_SOURCE = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("/root/.hermes/hermes-agent")
+HERMES_SOURCE = (
+    Path(sys.argv[1])
+    if len(sys.argv) > 1
+    else Path(os.getenv("HERMES_AGENT_ROOT", str(Path.home() / ".hermes/hermes-agent")))
+)
 
 tmpdir = tempfile.mkdtemp(prefix="hermes-cursor-contract-")
 home = Path(tmpdir)

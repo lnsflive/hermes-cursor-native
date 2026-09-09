@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -7,7 +8,7 @@ import pytest
 from hermes_cursor_native.capabilities import probe_runtime
 from hermes_cursor_native.discovery import Runtime
 
-HERMES_SOURCE = Path("/root/.hermes/hermes-agent")
+HERMES_SOURCE = Path(os.getenv("HERMES_AGENT_ROOT", str(Path.home() / ".hermes/hermes-agent")))
 
 
 @pytest.mark.skipif(not HERMES_SOURCE.is_dir(), reason="stock Hermes checkout not present")
@@ -16,9 +17,14 @@ def test_live_stock_hermes_passes_behavioral_capability_probe() -> None:
         "posix-current",
         ("cli",),
         "linux",
-        Path("/root/.hermes"),
+        Path.home() / ".hermes",
         HERMES_SOURCE,
-        HERMES_SOURCE / "venv/bin/hermes",
+        HERMES_SOURCE
+        / (
+            ".venv/bin/hermes"
+            if (HERMES_SOURCE / ".venv/bin/hermes").exists()
+            else "venv/bin/hermes"
+        ),
         "0.21.1",
         True,
         "active",

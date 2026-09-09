@@ -46,7 +46,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        hermes-ref: [v0.21.1, main]
+        hermes-ref: [ead7e91dabf1e963796ec834b196984a2fa44ff4, main]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -55,7 +55,10 @@ jobs:
           python-version: "3.11"
       - name: Clone stock Hermes Agent
         run: |
-          git clone --filter=blob:none --depth 1 --branch "${{ matrix.hermes-ref }}" https://github.com/NousResearch/hermes-agent.git "$RUNNER_TEMP/hermes-agent"
+          git init "$RUNNER_TEMP/hermes-agent"
+          git -C "$RUNNER_TEMP/hermes-agent" remote add origin https://github.com/NousResearch/hermes-agent.git
+          git -C "$RUNNER_TEMP/hermes-agent" fetch --depth 1 origin "${{ matrix.hermes-ref }}"
+          git -C "$RUNNER_TEMP/hermes-agent" checkout --detach FETCH_HEAD
       - name: Install Hermes dependencies
         working-directory: ${{ runner.temp }}/hermes-agent
         run: uv sync --extra dev
