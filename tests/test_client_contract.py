@@ -30,3 +30,5 @@ def test_streaming_and_tool_contract_via_hermes_python() -> None:
     payload = json.loads(completed.stdout.strip())
     assert payload["streaming"] is True
     assert payload["tool_loop"] is True
+
+    assert payload["deadlines"] is True

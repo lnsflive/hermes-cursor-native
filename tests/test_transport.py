@@ -38,7 +38,7 @@ def bridge_server():
                 self.rfile.read(int(self.headers["Content-Length"]))
                 if mode == "headers":
                     time.sleep(1)
-                self.send_response(200)
+                self.send_response(400 if mode == "error" else 200)
                 self.end_headers()
                 if mode == "stall":
                     time.sleep(1)
@@ -46,6 +46,8 @@ def bridge_server():
                 payload = json.dumps({"message": "ok"}).encode()
                 frames = struct.pack(">BI", 0, len(payload)) + payload
                 frames += struct.pack(">BI", 2, 2) + b"{}"
+                if mode in {"unary", "error"}:
+                    frames = payload
                 try:
                     for byte in frames:
                         self.wfile.write(bytes([byte]))
@@ -95,3 +97,68 @@ def test_expired_deadline_does_not_open_connection(transport, monkeypatch):
     client = transport.ConnectJsonTransport("http://127.0.0.1:1", "test")
     with pytest.raises(transport.CursorBridgeError, match="deadline exceeded"):
         list(client.server_stream("Agent", "Run", {}, deadline=time.monotonic() - 1))
+
+
+@pytest.mark.parametrize("mode", ["schema", "token", "silent"])
+def test_failed_start_reaps_child(transport, monkeypatch, tmp_path, mode):
+    import subprocess
+
+    compat = ModuleType("hermes_cli._subprocess_compat")
+    compat.windows_hide_flags = lambda: 0
+    monkeypatch.setitem(sys.modules, "hermes_cli._subprocess_compat", compat)
+    monkeypatch.setattr(transport, "_build_subprocess_env", lambda _: None)
+    payload = {
+        "schemaVersion": 9 if mode == "schema" else 1,
+        "transport": "tcp", "protocol": "connect", "url": "http://127.0.0.1:1",
+        "authTokenFile": str(tmp_path / "missing-token"),
+    }
+    script = "import time; time.sleep(10)"
+    if mode != "silent":
+        ready = "cursor-sdk-bridge ready " + json.dumps(payload)
+        script = f"print({ready!r}, flush=True); " + script
+    popen = subprocess.Popen
+    children = []
+
+    def launch(*args, **kwargs):
+        # Emit the synthetic ready line on the stderr channel used by the bridge.
+        child = popen([sys.executable, "-c", script], stdout=subprocess.PIPE,
+                      stderr=subprocess.DEVNULL, text=True)
+        child.stderr = child.stdout
+        children.append(child)
+        return child
+
+    monkeypatch.setattr(transport.subprocess, "Popen", launch)
+    bridge = transport.CursorBridgeProcess(command="test", api_key="test", workspace=str(tmp_path))
+    started = time.monotonic()
+    try:
+        with pytest.raises(transport.CursorBridgeError):
+            bridge.start(deadline=started + 0.2)
+        assert time.monotonic() - started < 0.8
+        assert bridge.endpoint is None
+        assert not bridge.is_alive()
+        assert children[0].poll() is not None
+    finally:
+        for child in children:
+            if child.poll() is None:
+                child.kill()
+            child.wait(timeout=2)
+            child.stdout.close()
+
+
+@pytest.mark.parametrize("mode", ["headers", "stall", "drip"])
+def test_unary_timeout_bounds_partial_reads(transport, bridge_server, mode):
+    client = transport.ConnectJsonTransport(bridge_server(mode), "test")
+    started = time.monotonic()
+    with pytest.raises(transport.CursorBridgeError, match="timed out|deadline exceeded"):
+        client.unary("Agent", "Create", {}, timeout=0.2)
+    assert time.monotonic() - started < 0.8
+
+
+def test_unary_success_and_connect_error(transport, bridge_server):
+    client = transport.ConnectJsonTransport(bridge_server("unary"), "test")
+    assert client.unary("Agent", "Create", {}, timeout=2) == {"message": "ok"}
+    client = transport.ConnectJsonTransport(bridge_server("error"), "test")
+    with pytest.raises(transport.CursorBridgeError, match="HTTP 400 connect error"):
+        client.unary("Agent", "Create", {}, timeout=2)
+    with pytest.raises(transport.CursorBridgeError, match="HTTP 400 connect error"):
+        list(client.server_stream("Agent", "Run", {}, deadline=time.monotonic() + 2))

@@ -400,7 +400,8 @@ class CursorBridgeProcess:
     def is_alive(self) -> bool:
         return self._process is not None and self._process.poll() is None
 
-    def start(self) -> BridgeEndpoint:
+    def start(self, *, deadline: float | None = None) -> BridgeEndpoint:
+        _remaining_timeout(_STARTUP_TIMEOUT_SECONDS, deadline, "bridge startup")
         argv = [self._command, "--workspace", self._workspace]
         if self._tool_callback_url:
             argv += ["--tool-callback-url", self._tool_callback_url]
@@ -425,8 +426,12 @@ class CursorBridgeProcess:
                 f"could not launch Cursor SDK bridge {self._command!r}: {exc}"
             ) from exc
 
-        discovery = self._await_ready_line(self._process)
-        endpoint = endpoint_from_discovery(discovery)
+        try:
+            discovery = self._await_ready_line(self._process, deadline=deadline)
+            endpoint = endpoint_from_discovery(discovery)
+        except BaseException:
+            self.stop(force=True)
+            raise
         self.endpoint = endpoint
         logger.info(
             "Cursor SDK bridge ready (pid=%s, version=%s)",
@@ -435,7 +440,9 @@ class CursorBridgeProcess:
         )
         return endpoint
 
-    def _await_ready_line(self, process: subprocess.Popen[str]) -> dict[str, Any]:
+    def _await_ready_line(
+        self, process: subprocess.Popen[str], *, deadline: float | None = None,
+    ) -> dict[str, Any]:
         """Scan stderr for the discovery line; keep draining forever after.
 
         A full stderr pipe blocks the bridge, so the scanner thread never
@@ -476,27 +483,29 @@ class CursorBridgeProcess:
         import queue as _queue
 
         try:
-            result = found.get(timeout=_STARTUP_TIMEOUT_SECONDS)
+            wait_timeout = _remaining_timeout(_STARTUP_TIMEOUT_SECONDS, deadline, "bridge startup")
+            result = found.get(timeout=wait_timeout)
         except _queue.Empty:
-            self.stop()
             raise CursorBridgeError(
-                f"timed out after {_STARTUP_TIMEOUT_SECONDS:.0f}s waiting for the "
+                f"timed out after {wait_timeout:.2f}s waiting for the "
                 "Cursor SDK bridge ready line"
             ) from None
         if isinstance(result, Exception):
-            self.stop()
             raise result
         return result
 
-    def stop(self) -> None:
+    def stop(self, *, force: bool = False) -> None:
         process, self._process = self._process, None
         self.endpoint = None
         if process is None:
             return
         if process.poll() is None:
             try:
-                process.terminate()
-                process.wait(timeout=_SHUTDOWN_TIMEOUT_SECONDS)
+                if force:
+                    process.kill()
+                else:
+                    process.terminate()
+                    process.wait(timeout=_SHUTDOWN_TIMEOUT_SECONDS)
             except subprocess.TimeoutExpired:
                 with contextlib.suppress(OSError):
                     process.kill()
@@ -560,13 +569,19 @@ class ConnectJsonTransport:
         *,
         timeout: float = 60.0,
     ) -> dict[str, Any]:
+        deadline = time.monotonic() + timeout
         body = json.dumps(request).encode("utf-8")
         req = self._request(f"/sdk.v1.{service}/{method}", "application/json", body)
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as reply:
-                raw = reply.read()
+            with urllib.request.urlopen(
+                req, timeout=_remaining_timeout(timeout, deadline, f"{service}/{method}")
+            ) as reply:
+                raw = _read_response(reply, timeout, deadline)
         except urllib.error.HTTPError as err:
-            self._raise_connect_error(err.read(), http_status=err.code)
+            with err:
+                self._raise_connect_error(
+                    _read_response(err.fp, timeout, deadline), http_status=err.code
+                )
         except (urllib.error.URLError, OSError) as err:
             raise CursorBridgeError(f"{service}/{method}: {err}") from None
         if not raw:
@@ -600,7 +615,10 @@ class ConnectJsonTransport:
                 req, timeout=_remaining_timeout(read_timeout, deadline, f"{service}/{method}")
             )
         except urllib.error.HTTPError as err:
-            self._raise_connect_error(err.read(), http_status=err.code)
+            with err:
+                self._raise_connect_error(
+                    _read_response(err.fp, read_timeout, deadline), http_status=err.code
+                )
             return  # unreachable; keeps type-checkers happy
         except (urllib.error.URLError, OSError) as err:
             raise CursorBridgeError(f"{service}/{method}: {err}") from None
@@ -645,21 +663,35 @@ def _remaining_timeout(read_timeout: float, deadline: float | None, what: str) -
     return min(read_timeout, remaining)
 
 
+def _read_response(stream: Any, read_timeout: float, deadline: float | None) -> bytes:
+    chunks = []
+    while True:
+        chunk = _read_chunk(stream, 65536, read_timeout, deadline, "response body")
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
+
+
+def _read_chunk(
+    stream: Any, count: int, read_timeout: float, deadline: float | None, what: str,
+) -> bytes:
+    try:
+        timeout = _remaining_timeout(read_timeout, deadline, what)
+        # One underlying read at a time lets partial frames share one deadline.
+        if stream.fp is not None:
+            stream.fp.raw._sock.settimeout(timeout)
+        return stream.read1(count)
+    except OSError as exc:
+        raise CursorBridgeError(f"{what}: stream read failed: {exc}") from None
+
+
 def _read_exact(
     stream: Any, count: int, *, what: str,
     read_timeout: float = 90.0, deadline: float | None = None,
 ) -> bytes:
     chunks = b""
     while len(chunks) < count:
-        try:
-            timeout = _remaining_timeout(read_timeout, deadline, what)
-            # urlopen returns HTTPResponse. read1 performs at most one underlying
-            # read, so partial frames cannot reset the same timeout indefinitely.
-            if stream.fp is not None:
-                stream.fp.raw._sock.settimeout(timeout)
-            chunk = stream.read1(count - len(chunks))
-        except OSError as exc:
-            raise CursorBridgeError(f"{what}: stream read failed: {exc}") from None
+        chunk = _read_chunk(stream, count - len(chunks), read_timeout, deadline, what)
         if not chunk:
             raise CursorBridgeError(f"{what}: stream ended before EndStreamResponse")
         chunks += chunk

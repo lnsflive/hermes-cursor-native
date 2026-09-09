@@ -51,6 +51,7 @@ from .cursor_bridge_transport import (
     ConnectJsonTransport,
     CursorBridgeError,
     CursorBridgeProcess,
+    _remaining_timeout,
     resolve_bridge_command,
 )
 from .cursor_bridge_wire import (
@@ -316,7 +317,8 @@ class _ToolCallbackServer(ThreadingHTTPServer):
         self.handler = handler
         self.auth_token = secrets.token_urlsafe(32)
         self._thread = threading.Thread(
-            target=self.serve_forever, daemon=True, name="cursor-tool-callback"
+            target=self.serve_forever, kwargs={"poll_interval": 0.01},
+            daemon=True, name="cursor-tool-callback"
         )
 
     @property
@@ -423,8 +425,14 @@ class CursorBridgeClient:
 
     # ── lifecycle ────────────────────────────────────────────────────────
 
-    def _ensure_bridge(self) -> ConnectJsonTransport:
-        with self._lock:
+    def _ensure_bridge(self, *, deadline: float | None = None) -> ConnectJsonTransport:
+        wait = -1 if deadline is None else _remaining_timeout(
+            float("inf"), deadline, "bridge startup lock"
+        )
+        if not self._lock.acquire(timeout=wait):
+            raise CursorBridgeError("bridge startup lock: deadline exceeded")
+        try:
+            _remaining_timeout(45.0, deadline, "bridge startup")
             if (
                 self._transport is not None
                 and self._process is not None
@@ -467,13 +475,20 @@ class CursorBridgeClient:
                 tool_callback_url=self._callback_server.url,
                 tool_callback_auth_token=self._callback_server.auth_token,
             )
-            endpoint = process.start()
+            try:
+                endpoint = process.start(deadline=deadline)
+            except BaseException:
+                callback_server, self._callback_server = self._callback_server, None
+                callback_server.stop()
+                raise
             self._process = process
             self._transport = ConnectJsonTransport(endpoint.url, endpoint.auth_token)
             self.is_closed = False
             return self._transport
+        finally:
+            self._lock.release()
 
-    def close(self) -> None:
+    def close(self, *, deadline: float | None = None) -> None:
         with self._lock:
             self.is_closed = True
             transport, self._transport = self._transport, None
@@ -485,10 +500,13 @@ class CursorBridgeClient:
                     "SdkBridgeControlService",
                     "Shutdown",
                     {"graceSeconds": 0},
-                    timeout=3.0,
+                    timeout=_remaining_timeout(3.0, deadline, "bridge shutdown"),
                 )
         if process is not None:
-            process.stop()
+            if deadline is None:
+                process.stop()
+            else:
+                process.stop(force=True)
         if callback_server is not None:
             callback_server.stop()
 
@@ -615,9 +633,9 @@ class CursorBridgeClient:
         **_: Any,
     ) -> Any:
         del tool_choice  # the Cursor harness decides tool use on its own
-        transport = self._ensure_bridge()
         effective_timeout = self._normalize_timeout(timeout)
         deadline = time.monotonic() + effective_timeout
+        transport = self._ensure_bridge(deadline=deadline)
 
         model_id = (model or "").strip()
         if not model_id or model_id.lower() == "cursor":
@@ -644,7 +662,8 @@ class CursorBridgeClient:
             options["tools"] = {"names": ["mcp"] if custom_tools else []}
 
         created = transport.unary(
-            "SdkAgentService", "CreateAgent", {"options": options}, timeout=60.0
+            "SdkAgentService", "CreateAgent", {"options": options},
+            timeout=_remaining_timeout(60.0, deadline, "CreateAgent")
         )
         agent_id = str(created.get("agentId") or "")
         if not agent_id:
@@ -686,7 +705,7 @@ class CursorBridgeClient:
                 # sdk_message / interaction_update / keepalives: ignored.
         finally:
             self._active_runs.pop(agent_id, None)
-            self._cleanup_agent(transport, agent_id)
+            self._cleanup_agent(transport, agent_id, deadline=deadline)
 
         captured = list(run.captured_calls)
         if (
@@ -736,14 +755,16 @@ class CursorBridgeClient:
             return _completion_to_stream_chunks(completion)
         return completion
 
-    def _cleanup_agent(self, transport: ConnectJsonTransport, agent_id: str) -> None:
+    def _cleanup_agent(
+        self, transport: ConnectJsonTransport, agent_id: str, *, deadline: float | None = None,
+    ) -> None:
         """Delete the per-request agent so bridge-store state does not pile up."""
         try:
             transport.unary(
                 "SdkAgentService",
                 "DeleteAgent",
                 {"agentId": agent_id, "options": {"cwd": self._workspace}},
-                timeout=15.0,
+                timeout=_remaining_timeout(15.0, deadline, "DeleteAgent"),
             )
         except CursorBridgeError as exc:
             logger.debug("cursor agent cleanup failed for %s: %s", agent_id, exc)
@@ -769,14 +790,18 @@ class CursorBridgeClient:
 
     # ── catalog ──────────────────────────────────────────────────────────
 
-    def list_models(self) -> list[dict[str, Any]]:
+    def list_models(
+        self, *, timeout: float = 30.0, deadline: float | None = None,
+    ) -> list[dict[str, Any]]:
         """Return the account's model catalog (SdkModel dicts)."""
-        transport = self._ensure_bridge()
+        if deadline is None:
+            deadline = time.monotonic() + timeout
+        transport = self._ensure_bridge(deadline=deadline)
         response = transport.unary(
             "SdkCursorService",
             "ListModels",
             {"options": {"apiKey": self.api_key}},
-            timeout=30.0,
+            timeout=_remaining_timeout(30.0, deadline, "ListModels"),
         )
         items = response.get("items")
         return [item for item in items or [] if isinstance(item, dict)]

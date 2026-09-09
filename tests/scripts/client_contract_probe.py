@@ -104,4 +104,64 @@ assert len(calls) == 3
 assert all(call.id == call.call_id for call in calls)
 assert len({call.id for call in calls}) == 3
 assert calls[2].id == "supplied-id"
-print(json.dumps({"streaming": True, "tool_loop": True}))
+# Exercise one shared budget through startup, CreateAgent/ListModels and cleanup.
+clock = [100.0]
+rpc_calls = []
+
+
+class DeadlineProcess:
+    def __init__(self, **kwargs):
+        pass
+
+    def start(self, *, deadline):
+        assert deadline == 101.0
+        clock[0] += 0.4
+        return SimpleNamespace(url="http://127.0.0.1:1", auth_token="test")
+
+    def is_alive(self):
+        return True
+
+    def stop(self, **kwargs):
+        pass
+
+
+class DeadlineTransport(FakeTransport):
+    def __init__(self, *args):
+        pass
+
+    def unary(self, service, method, payload, timeout=30):
+        assert 0 < timeout <= 101.0 - clock[0]
+        rpc_calls.append(method)
+        if method == "ListModels":
+            return {"items": [{"id": "catalog-model"}]}
+        return super().unary(service, method, payload, timeout)
+
+
+transport_module = importlib.import_module(client_module.CursorBridgeProcess.__module__)
+with patch.object(client_module.time, "monotonic", side_effect=lambda: clock[0]), \
+     patch.object(client_module, "CursorBridgeProcess", DeadlineProcess), \
+     patch.object(client_module, "ConnectJsonTransport", DeadlineTransport), \
+     patch.object(client_module, "resolve_bridge_command", return_value="test"), \
+     patch.object(transport_module, "resolve_bridge_command", return_value="test"):
+    deadline_client = profile.create_client(api_key="test")
+    try:
+        deadline_client.chat.completions.create(model="auto", messages=[], timeout=1.0)
+    finally:
+        deadline_client.close(deadline=101.0)
+    assert "CreateAgent" in rpc_calls
+    clock[0] = 100.0
+    assert profile.fetch_models(api_key="test", timeout=1.0) == ["catalog-model"]
+    assert "ListModels" in rpc_calls
+# Waiting for another startup also consumes the caller's budget.
+locked_client = profile.create_client(api_key="test")
+locked_client._lock.acquire()
+try:
+    try:
+        locked_client.list_models(timeout=0.02)
+    except client_module.CursorBridgeError as exc:
+        assert "deadline exceeded" in str(exc)
+    else:
+        raise AssertionError("A held startup lock must respect the catalog timeout")
+finally:
+    locked_client._lock.release()
+print(json.dumps({"streaming": True, "tool_loop": True, "deadlines": True}))

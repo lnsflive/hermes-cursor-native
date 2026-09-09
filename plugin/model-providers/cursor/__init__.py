@@ -1,5 +1,7 @@
 """Cursor subscription model provider (plugin-local bridge transport)."""
 
+import time
+
 from providers import register_provider
 from providers.base import ProviderProfile
 
@@ -21,7 +23,8 @@ class CursorProfile(ProviderProfile):
         base_url: str | None = None,
         timeout: float = 8.0,
     ) -> list[str] | None:
-        del base_url, timeout
+        del base_url
+        deadline = time.monotonic() + timeout
         from .cursor_sdk_auth import resolve_cursor_api_key
 
         resolved_key = (api_key or "").strip()
@@ -37,9 +40,9 @@ class CursorProfile(ProviderProfile):
                 return None
             client = CursorBridgeClient(api_key=resolved_key)
             try:
-                models = client.list_models()
+                models = client.list_models(deadline=deadline)
             finally:
-                client.close()
+                client.close(deadline=deadline)
             ids = [str(m.get("id") or "").strip() for m in models]
             return [m for m in ids if m] or None
         except Exception:
