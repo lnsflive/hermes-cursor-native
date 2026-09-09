@@ -10,7 +10,7 @@ import pytest
 
 from hermes_cursor_native.capabilities import CapabilityReport
 from hermes_cursor_native.discovery import Runtime
-from hermes_cursor_native.install_plan import build_install_plan
+from hermes_cursor_native.install_plan import InstallPlan, build_install_plan
 from hermes_cursor_native.installer import (
     ApprovalRequiredError,
     CommandResult,
@@ -18,6 +18,7 @@ from hermes_cursor_native.installer import (
     deploy_plugin,
     execute_install_plan,
     require_approval,
+    run_cursor_oauth,
     safe_extract_tar,
     verify_sha256,
 )
@@ -268,3 +269,92 @@ def test_bridge_backup_failure_preserves_existing_install(tmp_path, monkeypatch,
         tmp_path, monkeypatch, existing=True, failure=failure,
         native_runner=False, profile="default",
     )
+
+
+def test_execute_install_plan_rejects_changed_runtime_source(tmp_path):
+    home = tmp_path / "home"
+    approved = tmp_path / "approved"
+    changed = tmp_path / "changed"
+    approved.mkdir()
+    changed.mkdir()
+    hermes = approved / "venv/bin/hermes"
+    hermes.parent.mkdir(parents=True)
+    hermes.write_bytes(b"hermes")
+    hermes.chmod(0o755)
+
+    package = tmp_path / "package"
+    runtime = Runtime(
+        "posix-current", ("cli",), "linux", home, approved, hermes, "0.21.1", True, "active",
+    )
+    capabilities = CapabilityReport(
+        runtime_id="posix-current",
+        hermes_version="0.21.1",
+        source_root=approved,
+        plugin_seam=True,
+        provider_client_seam=True,
+        plugin_registered=True,
+        client_contract=True,
+    )
+    plan = InstallPlan(
+        runtime=runtime,
+        profile="default",
+        manifest_version="0.2.0a1",
+        artifact_key="linux-x64",
+        artifact={"url": "https://example.invalid/bridge.tar.gz", "sha256": "0" * 64},
+        executable_sha256=hashlib.sha256(b"hermes").hexdigest(),
+        operations=(),
+        capabilities=capabilities,
+    )
+
+    def run(_args, _cwd, _interactive=False):
+        return CommandResult(0, "", "")
+
+    with pytest.raises(InstallerError, match="runtime source changed"):
+        execute_install_plan(
+            plan,
+            package_root=package,
+            approved=True,
+            run=run,
+            download=lambda _url: b"",
+            executable_probe=lambda _runtime: ("0.21.1", changed),
+        )
+
+
+def test_run_cursor_oauth_surfaces_genuine_login_failure(tmp_path):
+    hermes = tmp_path / "hermes"
+    source = tmp_path / "source"
+    source.mkdir()
+    home = tmp_path / "home"
+    package = tmp_path / "package"
+
+    def run(_args, _cwd, _interactive=False):
+        return CommandResult(1, "", "login timed out")
+
+    with pytest.raises(InstallerError, match="Cursor OAuth failed: login timed out"):
+        run_cursor_oauth(run, hermes, source, home, package)
+
+
+def test_run_cursor_oauth_falls_back_when_command_missing(tmp_path, monkeypatch):
+    hermes = tmp_path / "hermes"
+    source = tmp_path / "source"
+    source.mkdir()
+    home = tmp_path / "home"
+    package = tmp_path / "package"
+    auth_script = package / "plugin/model-providers/cursor/cursor_sdk_auth.py"
+    auth_script.parent.mkdir(parents=True)
+    auth_script.write_text("print('ok')\n", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def run(args, _cwd, _interactive=False):
+        calls.append(args)
+        if args[-2:] == ["cursor", "login"]:
+            return CommandResult(2, "", "Error: No such command 'cursor'.")
+        return CommandResult(0, "", "")
+
+    import hermes_cursor_native.installer as installer_mod
+
+    monkeypatch.setattr(installer_mod.sys, "executable", "/usr/bin/python3")
+    run_cursor_oauth(run, hermes, source, home, package)
+    assert len(calls) == 2
+    assert calls[1][0] == "/usr/bin/python3"
+    assert calls[1][1].endswith("cursor_sdk_auth.py")

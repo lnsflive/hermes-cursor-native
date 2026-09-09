@@ -111,17 +111,22 @@ except Exception as exc:
     env = os.environ.copy()
     env["HERMES_HOME"] = str(hermes_home)
     env["PYTHONPATH"] = str(source_root)
-    completed = subprocess.run(
-        [str(python), "-c", script],
-        cwd=source_root,
-        env=env,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=120,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            [str(python), "-c", script],
+            cwd=source_root,
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
+            check=False,
+        )
+    except OSError:
+        return None, "catalog_probe_failed"
+    except subprocess.TimeoutExpired:
+        return None, "catalog_probe_timed_out"
     if completed.returncode != 0:
         return None, "catalog_probe_failed"
     try:
@@ -163,17 +168,22 @@ except Exception as exc:
     env = os.environ.copy()
     env["HERMES_HOME"] = str(hermes_home)
     env["PYTHONPATH"] = str(source_root)
-    completed = subprocess.run(
-        [str(python), "-c", script],
-        cwd=source_root,
-        env=env,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=60,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            [str(python), "-c", script],
+            cwd=source_root,
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60,
+            check=False,
+        )
+    except OSError:
+        return "runtime_probe_failed"
+    except subprocess.TimeoutExpired:
+        return "runtime_probe_timed_out"
     if completed.returncode != 0:
         return "runtime_probe_failed"
     try:

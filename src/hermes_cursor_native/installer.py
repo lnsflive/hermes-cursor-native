@@ -207,6 +207,19 @@ def _timestamp() -> str:
     return datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
 
 
+_UNSUPPORTED_LOGIN_MARKERS = (
+    "no such command",
+    "unknown command",
+    "invalid choice",
+    "unrecognized arguments",
+)
+
+
+def _cursor_login_unsupported(result: CommandResult) -> bool:
+    text = f"{result.stdout}\n{result.stderr}".lower()
+    return any(marker in text for marker in _UNSUPPORTED_LOGIN_MARKERS)
+
+
 def run_cursor_oauth(
     run: CommandRunner,
     hermes: Path,
@@ -217,6 +230,9 @@ def run_cursor_oauth(
     result = run([str(hermes), "cursor", "login"], source, True)
     if result.returncode == 0:
         return
+    if not _cursor_login_unsupported(result):
+        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+        raise InstallerError(f"Cursor OAuth failed: {detail}")
     auth_script = hermes_home / "plugins" / "model-providers" / "cursor" / "cursor_sdk_auth.py"
     if not auth_script.is_file():
         auth_script = package_root / "plugin" / "model-providers" / "cursor" / "cursor_sdk_auth.py"
@@ -270,9 +286,14 @@ def execute_install_plan(
         actual_executable_sha256, plan.executable_sha256
     ):
         raise InstallerError("Approved Hermes executable changed after approval")
-    live_version, _live_source = executable_probe(plan.runtime)
+    live_version, live_source = executable_probe(plan.runtime)
     if live_version != plan.runtime.version:
         raise InstallerError("Hermes executable identity changed after approval")
+    if (
+        plan.runtime.source_root is not None
+        and (live_source is None or live_source.resolve() != source.resolve())
+    ):
+        raise InstallerError("Hermes runtime source changed after approval")
 
     stamp = timestamp()
     config_path: Path | None = None

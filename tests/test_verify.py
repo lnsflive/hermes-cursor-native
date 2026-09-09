@@ -33,6 +33,109 @@ def test_safe_auth_status_converts_probe_failures(tmp_path, monkeypatch, failure
     assert auth_note == note
 
 
+@pytest.mark.parametrize(
+    ("failure", "expected"),
+    [
+        (OSError("python missing"), "catalog_probe_failed"),
+        (subprocess.TimeoutExpired(cmd="python", timeout=120), "catalog_probe_timed_out"),
+    ],
+)
+def test_receipt_catalog_probe_converts_launch_failures(
+    tmp_path, monkeypatch, failure, expected,
+):
+    home = tmp_path / "home"
+    source = tmp_path / "source"
+    source.mkdir()
+    python = source / "python"
+    python.touch()
+    runtime = Runtime("test", ("cli",), "linux", home, source, source / "hermes",
+                      "test", True, "active")
+    python_calls = 0
+
+    def subprocess_run(args, **kwargs):
+        if args[-3:] == ["auth", "status", "cursor"]:
+            return CompletedProcess(args, 0, "cursor: logged in", "")
+        if args[:2] == [str(python), "-c"]:
+            nonlocal python_calls
+            python_calls += 1
+            if python_calls == 1:
+                raise failure
+            return CompletedProcess(args, 0, '{"ok": true}', "")
+        return CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(verify.subprocess, "run", subprocess_run)
+    monkeypatch.setattr(verify, "run_contract_checks", lambda *args: {"client_contract": True})
+    receipt = collect_receipt(runtime, bridge_path=None)
+    assert receipt.model_catalog_error == expected
+    assert receipt.chat_probe == "runtime_credentials_ok"
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected"),
+    [
+        (OSError("python missing"), "runtime_probe_failed"),
+        (subprocess.TimeoutExpired(cmd="python", timeout=60), "runtime_probe_timed_out"),
+    ],
+)
+def test_receipt_runtime_probe_converts_launch_failures(
+    tmp_path, monkeypatch, failure, expected,
+):
+    home = tmp_path / "home"
+    source = tmp_path / "source"
+    source.mkdir()
+    python = source / "python"
+    python.touch()
+    runtime = Runtime("test", ("cli",), "linux", home, source, source / "hermes",
+                      "test", True, "active")
+    python_calls = 0
+
+    def subprocess_run(args, **kwargs):
+        if args[-3:] == ["auth", "status", "cursor"]:
+            return CompletedProcess(args, 0, "cursor: logged in", "")
+        if args[:2] == [str(python), "-c"]:
+            nonlocal python_calls
+            python_calls += 1
+            if python_calls == 1:
+                return CompletedProcess(args, 0, '{"count": 3}', "")
+            raise failure
+        return CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(verify.subprocess, "run", subprocess_run)
+    monkeypatch.setattr(verify, "run_contract_checks", lambda *args: {"client_contract": True})
+    receipt = collect_receipt(runtime, bridge_path=None)
+    assert receipt.model_catalog_count == 3
+    assert receipt.chat_probe == expected
+
+
+def test_status_survives_python_probe_failures(tmp_path, monkeypatch, capsys):
+    home = tmp_path / "home"
+    source = tmp_path / "source"
+    source.mkdir()
+    python = source / "python"
+    python.touch()
+    runtime = Runtime("test", ("cli",), "linux", home, source, source / "hermes",
+                      "test", True, "active")
+    call_count = 0
+
+    def subprocess_run(args, **kwargs):
+        nonlocal call_count
+        if args[-3:] == ["auth", "status", "cursor"]:
+            return CompletedProcess(args, 0, "cursor: logged in", "")
+        call_count += 1
+        raise OSError("python missing")
+
+    monkeypatch.setattr(verify.subprocess, "run", subprocess_run)
+    monkeypatch.setattr(verify, "resolve_hermes_python", lambda _: python)
+    monkeypatch.setattr(verify, "run_contract_checks", lambda *args: {"client_contract": True})
+    assert cli.main(["status", "--runtime", "test", "--json"],
+                    discover=lambda: [runtime]) == 0
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.err
+    receipt = json.loads(captured.out)
+    assert receipt["model_catalog_error"] == "catalog_probe_failed"
+    assert receipt["chat_probe"] == "runtime_probe_failed"
+
+
 def test_status_survives_auth_probe_failure(tmp_path, monkeypatch, capsys):
     home = tmp_path / "home"
     home.mkdir()
