@@ -340,6 +340,24 @@ def test_run_cursor_oauth_surfaces_genuine_login_failure(tmp_path):
         run_cursor_oauth(run, hermes, source, home, package)
 
 
+def test_run_cursor_oauth_prefers_login_failure_over_help_probe(tmp_path):
+    hermes = tmp_path / "hermes"
+    source = tmp_path / "source"
+    source.mkdir()
+    home = tmp_path / "home"
+    package = tmp_path / "package"
+
+    def run(args, _cwd, interactive=False):
+        if args[-1] == "--help":
+            return CommandResult(0, "Usage: hermes cursor login [options]", "")
+        if args[-2:] == ["cursor", "login"] and interactive:
+            return CommandResult(1, "", "login cancelled")
+        pytest.fail(f"unexpected invocation: {args!r} interactive={interactive}")
+
+    with pytest.raises(InstallerError, match="Cursor OAuth failed: login cancelled"):
+        run_cursor_oauth(run, hermes, source, home, package)
+
+
 def test_run_cursor_oauth_runs_supported_login_once(tmp_path):
     hermes = tmp_path / "hermes"
     source = tmp_path / "source"

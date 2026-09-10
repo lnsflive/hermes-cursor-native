@@ -249,8 +249,8 @@ def run_cursor_oauth(
     if result.returncode == 0:
         return
     detail = (
-        probe.stderr.strip() or probe.stdout.strip()
-        or result.stderr.strip() or result.stdout.strip()
+        result.stderr.strip() or result.stdout.strip()
+        or probe.stderr.strip() or probe.stdout.strip()
         or f"exit {result.returncode}"
     )
     raise InstallerError(f"Cursor OAuth failed: {detail}")
