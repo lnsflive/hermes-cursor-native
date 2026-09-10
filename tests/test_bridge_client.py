@@ -16,6 +16,12 @@ def test_missing_credentials_message_mentions_supported_login_commands() -> None
     assert 'Run `hermes cursor login`' not in text
 
 
+def test_harness_mode_honors_disabled_builtin_tools() -> None:
+    text = BRIDGE_CLIENT.read_text(encoding="utf-8")
+    assert 'if self._tool_mode == "loop" and not self._builtin_tools:' not in text
+    assert "if not self._builtin_tools:" in text
+
+
 def test_sdk_auth_timeout_message_mentions_supported_login_commands() -> None:
     text = SDK_AUTH.read_text(encoding="utf-8")
     assert "`hermes model` and pick Cursor to sign in" in text

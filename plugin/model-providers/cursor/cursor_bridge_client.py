@@ -650,7 +650,7 @@ class CursorBridgeClient:
         }
         if custom_tools:
             options["local"]["customTools"] = custom_tools
-        if self._tool_mode == "loop" and not self._builtin_tools:
+        if not self._builtin_tools:
             # Restrict Cursor's built-in tools so the harness cannot bypass
             # Hermes approvals with its own shell/file tools.  Custom tools
             # are surfaced to the model THROUGH the harness's `mcp`
