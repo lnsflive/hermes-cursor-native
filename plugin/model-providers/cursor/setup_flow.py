@@ -20,7 +20,7 @@ def _login_cursor_oauth(*_args, force_new_login: bool = False, **_kwargs) -> Non
         clear_sdk_credentials()
     try:
         login(on_login_url=on_url, on_status=print)
-    except Exception:
+    except (Exception, KeyboardInterrupt):
         if backup is not None:
             expires = backup.get("apiKeyExpiresAtMs")
             save_sdk_credentials(

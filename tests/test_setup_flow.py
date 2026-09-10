@@ -64,3 +64,24 @@ def test_force_new_login_restores_credentials_on_failure(monkeypatch):
         "api_key_expires_at_ms": 9_999_999_999_000,
         "email": "user@example.com",
     }]
+
+
+def test_force_new_login_restores_credentials_on_keyboard_interrupt(monkeypatch):
+    backup = {
+        "version": 1,
+        "backendUrl": "https://api2.cursor.sh",
+        "apiKey": "sk-old",
+        "apiKeyExpiresAtMs": 9_999_999_999_000,
+        "email": "user@example.com",
+    }
+    restored: list[dict] = []
+
+    monkeypatch.setattr(cursor_sdk_auth, "read_sdk_credentials", lambda: backup)
+    monkeypatch.setattr(cursor_sdk_auth, "clear_sdk_credentials", lambda: True)
+    monkeypatch.setattr(cursor_sdk_auth, "login", lambda **_kwargs: (_ for _ in ()).throw(KeyboardInterrupt()))
+    monkeypatch.setattr(cursor_sdk_auth, "save_sdk_credentials", lambda **kwargs: restored.append(kwargs))
+
+    with pytest.raises(KeyboardInterrupt):
+        setup_flow._login_cursor_oauth(force_new_login=True)
+
+    assert restored[0]["api_key"] == "sk-old"
