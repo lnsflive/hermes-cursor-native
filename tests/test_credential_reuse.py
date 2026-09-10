@@ -41,6 +41,17 @@ def test_oauth_tokens_are_not_used_as_api_keys(auth):
     assert auth.resolve_cursor_api_key() == ("", "")
 
 
+def test_dashboard_rpc_wraps_transport_errors(auth, monkeypatch):
+    import urllib.error
+
+    def fail_urlopen(*_args, **_kwargs):
+        raise urllib.error.URLError("connection refused")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fail_urlopen)
+    with pytest.raises(auth.CursorAuthError, match="DashboardService/CreateUserApiKey failed"):
+        auth._dashboard_rpc("https://api2.cursor.sh", "CreateUserApiKey", {}, "token")
+
+
 def test_explicit_key_takes_precedence(auth, monkeypatch):
     path = auth.cli_auth_path()
     path.parent.mkdir(parents=True)

@@ -483,7 +483,7 @@ class CursorBridgeProcess:
                     payload = parse_ready_line(line)
                 except CursorBridgeError as exc:
                     found.put(exc)
-                    payload = None
+                    return
                 if payload is None:
                     if len(diagnostics) < 60:
                         diagnostics.append(line)

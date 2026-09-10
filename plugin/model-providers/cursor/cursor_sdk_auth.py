@@ -202,6 +202,8 @@ def _dashboard_rpc(
         raise CursorAuthError(
             f"DashboardService/{method} failed (HTTP {err.code}): {body}"
         ) from err
+    except (urllib.error.URLError, OSError) as err:
+        raise CursorAuthError(f"DashboardService/{method} failed: {err}") from err
     try:
         parsed = json.loads(raw.decode("utf-8"))
     except ValueError as exc:

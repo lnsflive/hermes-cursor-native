@@ -99,6 +99,44 @@ def test_expired_deadline_does_not_open_connection(transport, monkeypatch):
         list(client.server_stream("Agent", "Run", {}, deadline=time.monotonic() - 1))
 
 
+def test_malformed_ready_line_stops_scanner(transport, monkeypatch, tmp_path):
+    import subprocess
+
+    compat = ModuleType("hermes_cli._subprocess_compat")
+    compat.windows_hide_flags = lambda: 0
+    monkeypatch.setitem(sys.modules, "hermes_cli._subprocess_compat", compat)
+    monkeypatch.setattr(transport, "_build_subprocess_env", lambda _: None)
+    script = (
+        "import time\n"
+        "print('cursor-sdk-bridge ready {bad', flush=True)\n"
+        "print('cursor-sdk-bridge ready {also-bad', flush=True)\n"
+        "time.sleep(30)\n"
+    )
+    popen = subprocess.Popen
+    children = []
+
+    def launch(*args, **kwargs):
+        child = popen([sys.executable, "-c", script], stdout=subprocess.PIPE,
+                      stderr=subprocess.DEVNULL, text=True)
+        child.stderr = child.stdout
+        children.append(child)
+        return child
+
+    monkeypatch.setattr(transport.subprocess, "Popen", launch)
+    bridge = transport.CursorBridgeProcess(command="test", api_key="test", workspace=str(tmp_path))
+    started = time.monotonic()
+    try:
+        with pytest.raises(transport.CursorBridgeError):
+            bridge.start(deadline=started + 1.0)
+        assert time.monotonic() - started < 0.8
+    finally:
+        for child in children:
+            if child.poll() is None:
+                child.kill()
+            child.wait(timeout=2)
+            child.stdout.close()
+
+
 @pytest.mark.parametrize("mode", ["schema", "token", "silent"])
 def test_failed_start_reaps_child(transport, monkeypatch, tmp_path, mode):
     import subprocess

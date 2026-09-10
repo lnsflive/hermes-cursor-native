@@ -78,8 +78,15 @@ def test_force_new_login_restores_credentials_on_keyboard_interrupt(monkeypatch)
 
     monkeypatch.setattr(cursor_sdk_auth, "read_sdk_credentials", lambda: backup)
     monkeypatch.setattr(cursor_sdk_auth, "clear_sdk_credentials", lambda: True)
-    monkeypatch.setattr(cursor_sdk_auth, "login", lambda **_kwargs: (_ for _ in ()).throw(KeyboardInterrupt()))
-    monkeypatch.setattr(cursor_sdk_auth, "save_sdk_credentials", lambda **kwargs: restored.append(kwargs))
+    def interrupt_login(**_kwargs):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(cursor_sdk_auth, "login", interrupt_login)
+    monkeypatch.setattr(
+        cursor_sdk_auth,
+        "save_sdk_credentials",
+        lambda **kwargs: restored.append(kwargs),
+    )
 
     with pytest.raises(KeyboardInterrupt):
         setup_flow._login_cursor_oauth(force_new_login=True)
