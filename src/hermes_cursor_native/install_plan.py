@@ -40,6 +40,33 @@ def resolve_profile_home(hermes_home: Path, profile: str) -> Path:
     return selected
 
 
+def resolve_plugin_path(plugin_home: Path) -> Path:
+    """Return the resolved cursor plugin path, rejecting symlink escapes."""
+    base = plugin_home.expanduser().resolve()
+    plugins_root = (base / "plugins").resolve()
+    try:
+        plugins_root.relative_to(base)
+    except ValueError:
+        raise InstallBlockedError(
+            f"Hermes plugins directory resolves outside {base}"
+        ) from None
+    model_providers = (plugins_root / "model-providers").resolve()
+    try:
+        model_providers.relative_to(plugins_root)
+    except ValueError:
+        raise InstallBlockedError(
+            "Hermes model-providers directory resolves outside plugins"
+        ) from None
+    cursor_plugin = (model_providers / "cursor").resolve()
+    try:
+        cursor_plugin.relative_to(model_providers)
+    except ValueError:
+        raise InstallBlockedError(
+            "Cursor plugin directory resolves outside model-providers"
+        ) from None
+    return cursor_plugin
+
+
 def validate_profile_name(profile: str) -> None:
     """Reject profile values that escape ``<HERMES_HOME>/profiles`` when joined."""
     if profile == "default":

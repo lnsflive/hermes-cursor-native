@@ -273,6 +273,54 @@ def test_bridge_backup_failure_preserves_existing_install(tmp_path, monkeypatch,
     )
 
 
+def test_execute_install_plan_wraps_executable_probe_failures(tmp_path):
+    home = tmp_path / "home"
+    source = tmp_path / "source"
+    source.mkdir()
+    hermes = source / "venv/bin/hermes"
+    hermes.parent.mkdir(parents=True)
+    hermes.write_bytes(b"hermes")
+    hermes.chmod(0o755)
+    package = tmp_path / "package"
+    runtime = Runtime(
+        "posix-current", ("cli",), "linux", home, source, hermes, "0.21.1", True, "active",
+    )
+    capabilities = CapabilityReport(
+        runtime_id="posix-current",
+        hermes_version="0.21.1",
+        source_root=source,
+        plugin_seam=True,
+        provider_client_seam=True,
+        plugin_registered=True,
+        client_contract=True,
+    )
+    plan = InstallPlan(
+        runtime=runtime,
+        profile="default",
+        manifest_version="0.2.0a1",
+        artifact_key="linux-x64",
+        artifact={"url": "https://example.invalid/bridge.tar.gz", "sha256": "0" * 64},
+        executable_sha256=hashlib.sha256(b"hermes").hexdigest(),
+        operations=(),
+        capabilities=capabilities,
+    )
+
+    import subprocess
+
+    def timeout_probe(_runtime):
+        raise subprocess.TimeoutExpired("cmd", 30)
+
+    with pytest.raises(InstallerError, match="identity could not be verified"):
+        execute_install_plan(
+            plan,
+            package_root=package,
+            approved=True,
+            run=lambda *_args: CommandResult(0, "", ""),
+            download=lambda _url: b"",
+            executable_probe=timeout_probe,
+        )
+
+
 def test_execute_install_plan_rejects_changed_runtime_source(tmp_path):
     home = tmp_path / "home"
     approved = tmp_path / "approved"

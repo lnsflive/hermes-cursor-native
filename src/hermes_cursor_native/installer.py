@@ -19,7 +19,12 @@ from functools import partial
 from pathlib import Path, PurePosixPath
 
 from .discovery import Runtime
-from .install_plan import InstallPlan, resolve_profile_home, validate_profile_name
+from .install_plan import (
+    InstallPlan,
+    resolve_plugin_path,
+    resolve_profile_home,
+    validate_profile_name,
+)
 from .verify import InstallReceipt, collect_receipt
 
 
@@ -260,7 +265,7 @@ def deploy_plugin(package_root: Path, hermes_home: Path) -> Path:
     source = package_root / "plugin" / "model-providers" / "cursor"
     if not source.is_dir():
         raise InstallerError(f"Plugin source is missing: {source}")
-    destination = hermes_home / "plugins" / "model-providers" / "cursor"
+    destination = resolve_plugin_path(hermes_home)
     destination.parent.mkdir(parents=True, exist_ok=True)
     if destination.exists():
         shutil.rmtree(destination)
@@ -298,7 +303,12 @@ def execute_install_plan(
         actual_executable_sha256, plan.executable_sha256
     ):
         raise InstallerError("Approved Hermes executable changed after approval")
-    live_version, live_source = executable_probe(plan.runtime)
+    try:
+        live_version, live_source = executable_probe(plan.runtime)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise InstallerError(
+            "Approved Hermes executable identity could not be verified"
+        ) from exc
     if live_version != plan.runtime.version:
         raise InstallerError("Hermes executable identity changed after approval")
     if (
@@ -315,7 +325,7 @@ def execute_install_plan(
     plugin_backup: Path | None = None
     plugin_mutated = False
     plugin_home = resolve_profile_home(Path(plan.runtime.home), plan.profile)
-    plugin_path = plugin_home / "plugins" / "model-providers" / "cursor"
+    plugin_path = resolve_plugin_path(plugin_home)
     bridge_backup: Path | None = None
     bridge_mutated = False
     bridge_root = Path(plan.runtime.home) / "cursor-sdk-bridge"

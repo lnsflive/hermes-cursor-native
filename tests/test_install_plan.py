@@ -12,6 +12,7 @@ from hermes_cursor_native.discovery import Runtime
 from hermes_cursor_native.install_plan import (
     InstallBlockedError,
     build_install_plan,
+    resolve_plugin_path,
     resolve_profile_home,
     validate_profile_name,
 )
@@ -65,6 +66,18 @@ def _linux_runtime(root: Path) -> Runtime:
 
 
 @pytest.mark.skipif(os.name == "nt", reason="symlink creation requires elevation on Windows")
+def test_resolve_plugin_path_rejects_symlinked_plugins_root(tmp_path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    outside_plugins = tmp_path / "outside-plugins"
+    outside_plugins.mkdir()
+    (home / "plugins").symlink_to(outside_plugins, target_is_directory=True)
+    (outside_plugins / "model-providers" / "cursor").mkdir(parents=True)
+
+    with pytest.raises(InstallBlockedError, match="plugins directory resolves outside"):
+        resolve_plugin_path(home)
+
+
 def test_resolve_profile_home_rejects_symlinked_profiles_root(tmp_path) -> None:
     home = tmp_path / "home"
     home.mkdir()
