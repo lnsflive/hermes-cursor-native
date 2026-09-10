@@ -272,6 +272,42 @@ def test_receipt_detects_plugin_layout(tmp_path, monkeypatch, profile, layout):
     assert receipt.plugin_path == str(plugin)
 
 
+def test_collect_receipt_uses_executable_parent_source(tmp_path, monkeypatch):
+    checkout = tmp_path / "checkout"
+    (checkout / "providers").mkdir(parents=True)
+    (checkout / "providers/base.py").write_text("#\n", encoding="utf-8")
+    hermes = checkout / "bin/hermes"
+    hermes.parent.mkdir(parents=True)
+    hermes.write_text("#\n", encoding="utf-8")
+    home = tmp_path / "home"
+    home.mkdir()
+    runtime = Runtime("test", ("cli",), "linux", home, None, hermes, "0.21.1", True, "active")
+    observed: list[Path] = []
+
+    def fake_contract(python, source_root, hermes_home):
+        observed.append(source_root)
+        return {
+            "plugin_seam": True,
+            "provider_client_seam": True,
+            "plugin_registered": True,
+            "client_contract": True,
+        }
+
+    monkeypatch.setattr(verify, "run_contract_checks", fake_contract)
+    monkeypatch.setattr(
+        verify,
+        "_safe_auth_status",
+        lambda *_args, **_kwargs: ("logged out", ""),
+    )
+    python = checkout / "venv/bin/python"
+    python.parent.mkdir(parents=True)
+    python.write_text("#\n", encoding="utf-8")
+    monkeypatch.setattr(verify, "resolve_hermes_python", lambda _: python)
+    receipt = collect_receipt(runtime, bridge_path=None)
+    assert observed == [checkout]
+    assert receipt.contract_checks["client_contract"] is True
+
+
 def test_resolve_status_bridge_uses_executable_parent_source(tmp_path, monkeypatch):
     checkout = tmp_path / "checkout"
     (checkout / "providers").mkdir(parents=True)

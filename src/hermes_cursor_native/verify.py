@@ -9,7 +9,7 @@ import subprocess
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from .capabilities import resolve_hermes_python
+from .capabilities import resolve_hermes_python, resolve_runtime_source
 from .discovery import Runtime
 
 _AUTH_LINE = re.compile(r"^(cursor|Cursor)\s*:\s*(logged in|logged out)\b", re.IGNORECASE)
@@ -228,25 +228,12 @@ def run_contract_checks(
     }
 
 
-def _resolve_probe_source(runtime: Runtime) -> Path | None:
-    if runtime.source_root is not None:
-        root = Path(runtime.source_root)
-        return root if root.is_dir() else None
-    if runtime.executable is None:
-        return None
-    executable = Path(runtime.executable).resolve()
-    for parent in executable.parents:
-        if (parent / "providers" / "base.py").is_file():
-            return parent
-    return None
-
-
 def resolve_status_bridge(runtime: Runtime, profile: str) -> tuple[Path | None, tuple[str, ...]]:
     """Use the selected runtime's installed provider resolver without starting a bridge."""
     home = Path(runtime.home)
     selected_home = home if profile == "default" else home / "profiles" / profile
     python = resolve_hermes_python(runtime)
-    source = _resolve_probe_source(runtime)
+    source = resolve_runtime_source(runtime)
     note = "bridge resolver unavailable: selected Hermes Python missing"
     if python is not None and source is not None:
         script = """
@@ -307,14 +294,15 @@ def collect_receipt(
     native_plugin = probe_home / "plugins" / "cursor"
     plugin_path = native_plugin if native_plugin.is_dir() else legacy_plugin
     hermes = Path(runtime.executable)  # type: ignore[arg-type]
-    source_root = Path(runtime.source_root) if runtime.source_root else Path(".")
+    source_root = resolve_runtime_source(runtime)
     profile_args = ["-p", profile]
-    auth_status, auth_note = _safe_auth_status(hermes, profile_args, source_root, hermes_home)
+    auth_cwd = source_root if source_root is not None else hermes.parent
+    auth_status, auth_note = _safe_auth_status(hermes, profile_args, auth_cwd, hermes_home)
     logged_in = auth_status == "logged in"
     python = resolve_hermes_python(runtime)
     contract = (
         run_contract_checks(python, source_root, probe_home)
-        if python is not None and python.is_file() and source_root.is_dir()
+        if python is not None and python.is_file() and source_root is not None
         else {
             "plugin_seam": False,
             "provider_client_seam": False,
@@ -324,12 +312,12 @@ def collect_receipt(
     )
     catalog_count, catalog_error = (
         _model_catalog_count(python, source_root, probe_home, logged_in=logged_in)
-        if python is not None and python.is_file() and source_root.is_dir()
+        if python is not None and python.is_file() and source_root is not None
         else (None, "python_missing")
     )
     runtime_probe = (
         _runtime_auth_probe(python, source_root, probe_home, logged_in=logged_in)
-        if python is not None and python.is_file() and source_root.is_dir()
+        if python is not None and python.is_file() and source_root is not None
         else "runtime_probe_unavailable"
     )
     auth_source = ""

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import http.client
 import io
 import os
 import shutil
@@ -18,6 +19,7 @@ from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path, PurePosixPath
 
+from .capabilities import resolve_runtime_source
 from .discovery import Runtime
 from .install_plan import (
     InstallPlan,
@@ -180,8 +182,16 @@ def run_command(
 
 def download_url(url: str) -> bytes:
     request = urllib.request.Request(url, headers={"User-Agent": "hermes-cursor-native"})
-    with urllib.request.urlopen(request, timeout=120) as response:
-        return response.read()
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            return response.read()
+    except (
+        urllib.error.URLError,
+        OSError,
+        http.client.IncompleteRead,
+        http.client.HTTPException,
+    ) as exc:
+        raise InstallerError(f"Bridge download failed: {exc}") from exc
 
 
 def _checked(
@@ -324,10 +334,12 @@ def execute_install_plan(
         ) from exc
     if live_version != plan.runtime.version:
         raise InstallerError("Hermes executable identity changed after approval")
-    if plan.runtime.source_root is not None:
-        if live_source is None or live_source.resolve() != source.resolve():
-            raise InstallerError("Hermes runtime source changed after approval")
-    elif live_source is not None and live_source.resolve() != source.resolve():
+    resolved_live_source = live_source or resolve_runtime_source(
+        plan.runtime, live_executable=True,
+    )
+    if resolved_live_source is not None and resolved_live_source.resolve() != source.resolve():
+        raise InstallerError("Hermes runtime source changed after approval")
+    if plan.runtime.source_root is not None and live_source is None and resolved_live_source is None:
         raise InstallerError("Hermes runtime source changed after approval")
 
     stamp = timestamp()
@@ -355,7 +367,15 @@ def execute_install_plan(
 
         try:
             payload = download(plan.artifact["url"])
-        except (urllib.error.URLError, OSError) as exc:
+        except (
+            InstallerError,
+            urllib.error.URLError,
+            OSError,
+            http.client.IncompleteRead,
+            http.client.HTTPException,
+        ) as exc:
+            if isinstance(exc, InstallerError):
+                raise
             raise InstallerError(f"Bridge download failed: {exc}") from exc
         verify_sha256(payload, plan.artifact["sha256"])
         if bridge_root.exists():

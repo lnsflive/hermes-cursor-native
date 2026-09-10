@@ -172,16 +172,27 @@ def _hermes_python(runtime: Runtime) -> Path | None:
     return resolve_hermes_python(runtime)
 
 
-def _hermes_source(runtime: Runtime) -> Path | None:
-    if runtime.source_root is not None and Path(runtime.source_root).is_dir():
-        return Path(runtime.source_root)
+def _resolve_executable_source(runtime: Runtime) -> Path | None:
     if runtime.executable is None:
         return None
-    exe = Path(runtime.executable).resolve()
-    for parent in exe.parents:
+    executable = Path(runtime.executable).resolve()
+    for parent in executable.parents:
         if (parent / "providers" / "base.py").is_file():
             return parent
     return None
+
+
+def resolve_runtime_source(runtime: Runtime, *, live_executable: bool = False) -> Path | None:
+    """Return the Hermes checkout used for probes, including PATH-only launchers."""
+    if not live_executable and runtime.source_root is not None:
+        root = Path(runtime.source_root)
+        if root.is_dir():
+            return root
+    return _resolve_executable_source(runtime)
+
+
+def _hermes_source(runtime: Runtime) -> Path | None:
+    return resolve_runtime_source(runtime)
 
 
 def _run_probe(python: Path, source_root: Path, script: str, *, env: dict[str, str]) -> dict:
