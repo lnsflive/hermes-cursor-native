@@ -1,156 +1,68 @@
-# Hermes Cursor Native
+# Cursor provider for Hermes
 
-Use Composer 2.5, Grok 4.6, Claude, GPT, Gemini, and your full Cursor model catalog as a native provider for [Hermes Agent](https://github.com/NousResearch/hermes-agent) chats, profiles, gateways, and bots.
+Add **Cursor** to Hermes's provider menu and use your account's Composer, Claude, GPT, Gemini, and other available models. Hermes keeps control of its own tools and sessions; requests run through the official Cursor SDK bridge.
 
-**Browser OAuth · official Cursor SDK bridge · Hermes-owned tools · profiles and gateways · Windows-first alpha**
+This is a **model-provider plugin**, not a Hermes fork. It does not patch Hermes source, contain credentials, or require a particular Hermes version number.
 
-> [!WARNING]
-> This repository is an early alpha. Version `0.1.0a1` supports a tested Hermes 0.20.5 patch path. Run discovery and `install --dry-run` before applying anything.
+## Install
 
-Hermes Cursor Native is independent and community-maintained. It is not affiliated with or endorsed by Nous Research or Cursor/Anysphere.
-
-## Why this exists
-
-Existing integrations generally make Cursor a delegated coding tool, wrap Cursor CLI in a proxy, or require a manually managed dashboard key. Hermes Cursor Native targets a different contract:
-
-```text
-Hermes profile
-  -> provider: cursor
-  -> official Cursor sdk.v1 bridge
-  -> structured custom-tool callback
-  -> Hermes executes tools, approvals, hooks, memory, and sessions
-  -> Cursor consumes the real tool result
-```
-
-## Capabilities
-
-- Browser PKCE OAuth via `hermes cursor login`
-- Full live Cursor account model catalog
-- Composer 2.5, Grok 4.6, and account-available Cursor models
-- Normal Hermes `model.provider=cursor`
-- Structured Hermes-owned tool execution
-- Profile, gateway, cron, memory, skills, plugin, and session compatibility
-- Runtime discovery across current Windows, legacy Windows, WSL, explicit source/Desktop overrides, and the checkout behind the active PATH launcher
-- Versioned patch series with original authorship preserved
-- Verified bridge downloads with SHA256 enforcement
-- Maintained deployment branch and rollback reference
-
-## Cursor-powered Hermes bots
-
-Once installed, `provider: cursor` works anywhere a normal Hermes model provider works. Existing Hermes profiles and messaging bots can use Cursor models while retaining their own identity, memory, skills, tools, sessions, and gateway configuration—including Telegram, Discord, Slack, WhatsApp, and other Hermes platforms.
-
-Hermes Cursor Native does **not** create a bot, named profile, or messaging connection. It installs and configures the provider for the profile you explicitly target. Bot/profile creation remains a normal Hermes workflow, so the same installation can support one existing bot or several independently configured profiles.
-
-## One-command install
-
-These commands become active after this repository is published.
-
-### Windows PowerShell
-
-```powershell
-irm https://raw.githubusercontent.com/lnsflive/hermes-cursor-native/v0.1.0-alpha.1/install.ps1 | iex
-```
-
-### macOS, Linux, or WSL
+With Hermes already installed:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lnsflive/hermes-cursor-native/v0.1.0-alpha.1/install.sh | bash
+hermes plugins install https://github.com/lnsflive/hermes-cursor-native --enable
+hermes model
 ```
 
-The command installs the management CLI, discovers Hermes runtimes, displays the exact plan, asks for the target and approval, opens Cursor OAuth, and runs verification. It does not create a new Hermes bot or profile.
+Review Hermes’s plugin trust prompt during installation.
 
-Release tags are the supported install source. Development builds require an explicit `HCN_REF` or `HCN_REPO` override.
+Select **Cursor** near the bottom of the provider menu. Reuse an existing compatible credential, or sign in through the browser. If needed, setup offers to download the verified SDK bridge. Then choose a model from your account's live catalog.
 
-## Agent-driven install
+Restart any Hermes process that was already running before installing/updating. Run installation and login as the OS user who runs Hermes. Repeat for each machine or separate Hermes home you use.
 
-Tell a capable agent:
+After authentication, Cursor models also appear in the in-chat `/model` picker and model inventory. Installation preserves your existing default model until you choose a replacement.
 
-```text
-Install Hermes Cursor Native from https://github.com/lnsflive/hermes-cursor-native.
-Read INSTALL_AGENT.md first. Show me every detected Hermes runtime and the exact
-plan, then wait for approval. Never print or copy OAuth credentials.
+## Existing authentication
+
+Credentials are resolved in this order:
+
+1. `CURSOR_API_KEY` from the environment or Hermes `.env`.
+2. A valid SDK browser login in the current user's `~/.cursor/sdk/auth.json`.
+3. An API key, if present in that same user's file-backed Cursor Agent CLI store.
+4. Otherwise, `hermes model` → **Cursor** opens browser login.
+
+CLI **browser login is not automatically an SDK API key**. The plugin only reuses the CLI's explicit `apiKey` field; it never treats OAuth access/refresh tokens as API keys. Keychain-only or changed CLI stores fall back to browser login. No credential is copied between users, hosts, or stores.
+
+See [Cursor's SDK authentication documentation](https://cursor.com/docs/sdk/python#authentication). Model availability and usage follow your Cursor account; this plugin does not provide a free inference service.
+
+## Compatibility
+
+Compatibility depends on Hermes's provider/client interfaces, not its version string. The plugin adapts provider registration, SDK credential discovery, model selection, and OAuth setup without editing core files.
+
+That does **not** guarantee compatibility with every past or future Hermes release. CI checks the supported baseline and current upstream; if Hermes changes an interface, the plugin may need updating. The optional installer probes the selected runtime before writing files. The SDK bridge is separately pinned and SHA256-verified because its wire protocol is a real dependency.
+
+## Optional installer
+
+For runtimes without native plugin installation, or explicit runtime selection:
+
+```bash
+uvx --from git+https://github.com/lnsflive/hermes-cursor-native@main hermes-cursor-native install
 ```
 
-## Local development
+This installs the same provider under `$HERMES_HOME/plugins/model-providers/cursor` and the SDK bridge. Use either native installation or this installer for a given home, rather than installing duplicate copies.
 
-```powershell
-git clone https://github.com/lnsflive/hermes-cursor-native
-cd hermes-cursor-native
-uv venv --python 3.11 .venv
-uv pip install --python .venv/Scripts/python.exe -e ".[dev]"
-.venv/Scripts/hermes-cursor-native.exe discover
-.venv/Scripts/hermes-cursor-native.exe install --dry-run --runtime windows-current
+The shell/PowerShell bootstraps also install the current plugin code. Set `HCN_REF` to a reviewed commit/tag to pin a deployment. [Installation details](docs/installation.md).
+
+## Development
+
+```bash
+uv sync --extra dev
+uv run pytest
+uv run ruff check .
+uv build
 ```
 
-POSIX uses `.venv/bin/...` instead.
+Set `HERMES_AGENT_ROOT` to a runnable Hermes checkout to run integration tests. Those tests cover normal import orders, browser-login dispatch, authenticated model pickers, and Hermes-owned tool callbacks using isolated test credentials. Live account checks are separate.
 
-## Runtime discovery
+## Attribution
 
-```text
-hermes-cursor-native discover
-hermes-cursor-native discover --json
-```
-
-The installer treats each Hermes estate independently. It never merges `%USERPROFILE%\.hermes`, `%LOCALAPPDATA%\hermes`, WSL, named profiles, or remote backends automatically.
-
-Remote/cloud/SSH Desktop registry discovery is planned and is not implemented in this alpha. Install on remote backends by running the installer on that host.
-
-See [Runtime discovery](docs/runtime-discovery.md).
-
-Operational references:
-
-- [Architecture](docs/architecture.md)
-- [Update survival and rollback](docs/update-survival.md)
-- [Troubleshooting](docs/troubleshooting.md)
-- [Existing approaches](docs/comparison.md)
-- [Third-party notices](THIRD_PARTY_NOTICES.md)
-
-## Install workflow
-
-```text
-hermes-cursor-native install --dry-run --runtime windows-current --profile default
-hermes-cursor-native install --runtime windows-current --profile default
-```
-
-For agent/CI use, both target and approval must be explicit:
-
-```text
-hermes-cursor-native install --runtime windows-current --profile default --yes
-```
-
-## Verification
-
-A successful install checks:
-
-1. Cursor provider registration through successful chats
-2. bridge path and SHA256
-3. OAuth login completion
-4. Composer 2.5 response marker
-5. Grok 4.6 response marker
-6. automatic Cursor routing response marker
-7. Hermes-owned terminal tool execution using a hidden random file nonce
-
-## Update model
-
-Alpha patch mode keeps Cursor commits on `cursor-provider-deployed` and configures:
-
-```yaml
-updates:
-  parked_branch_strategy: update_in_place
-```
-
-Upstream merges preserve the provider when clean. Conflicts stop for reconciliation. Do not use `hermes update --switch-branch` on a patched installation.
-
-The long-term target is a stock-Hermes provider service that requires no core patch. See [Architecture](docs/architecture.md).
-
-## Provenance
-
-The provider implementation originates from [NousResearch/hermes-agent PR #81502](https://github.com/NousResearch/hermes-agent/pull/81502), authored by Cursor Agent and Ethan Troy. This project preserves commit authorship and adds packaging, Windows support, runtime discovery, update safety, installation, rollback, and cross-harness documentation.
-
-## Security
-
-Read [SECURITY.md](SECURITY.md) before installing. The project never asks an LLM to handle OAuth credentials and never copies auth stores between Windows, WSL, users, or remote hosts.
-
-## License
-
-MIT. Third-party components retain their own licenses and trademarks.
+The provider originated in [NousResearch/hermes-agent PR #81502](https://github.com/NousResearch/hermes-agent/pull/81502), authored by Cursor Agent and Ethan Troy. Authorship and historical patches remain in Git history. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [LICENSE](LICENSE).

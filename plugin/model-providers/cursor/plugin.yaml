@@ -1,0 +1,5 @@
+name: cursor
+kind: model-provider
+version: 1.0.0
+description: Cursor subscription via the official Cursor SDK bridge
+author: lnsflive

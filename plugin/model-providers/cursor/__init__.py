@@ -1,0 +1,71 @@
+"""Cursor subscription model provider (plugin-local bridge transport)."""
+
+import time
+
+from providers import register_provider
+from providers.base import ProviderProfile
+
+from .defer_hooks import install_defer_hooks
+
+
+class CursorProfile(ProviderProfile):
+    """Cursor subscription — local sdk.v1 bridge subprocess, no REST catalog."""
+
+    def create_client(self, **client_kwargs):
+        from .cursor_bridge_client import CursorBridgeClient
+
+        return CursorBridgeClient(**client_kwargs)
+
+    def fetch_models(
+        self,
+        *,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        timeout: float = 8.0,
+    ) -> list[str] | None:
+        del base_url
+        deadline = time.monotonic() + timeout
+        from .cursor_sdk_auth import resolve_cursor_api_key
+
+        resolved_key = (api_key or "").strip()
+        if not resolved_key:
+            resolved_key, _source = resolve_cursor_api_key()
+        if not resolved_key:
+            return None
+        try:
+            from .cursor_bridge_client import CursorBridgeClient, load_bridge_settings
+            from .cursor_bridge_transport import resolve_bridge_command
+
+            settings = load_bridge_settings()
+            if not resolve_bridge_command(str(settings.get("command") or "")):
+                return None
+            client = CursorBridgeClient(api_key=resolved_key)
+            try:
+                models = client.list_models(deadline=deadline)
+            finally:
+                client.close(deadline=deadline)
+            ids = [str(m.get("id") or "").strip() for m in models]
+            return [m for m in ids if m] or None
+        except Exception:
+            return None
+
+
+cursor = CursorProfile(
+    name="cursor",
+    aliases=("cursor-sdk", "cursor-agent"),
+    display_name="Cursor",
+    description="Cursor subscription (Composer + catalog via the Cursor SDK bridge)",
+    signup_url="https://cursor.com/dashboard",
+    api_mode="chat_completions",
+    env_vars=("CURSOR_API_KEY",),
+    base_url="sdkbridge://cursor",
+    auth_type="api_key",
+    supports_health_check=False,
+    fallback_models=(
+        "auto",
+        "composer-2.5",
+    ),
+)
+
+register_provider(cursor)
+install_defer_hooks()

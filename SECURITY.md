@@ -12,8 +12,8 @@ Do not open public issues containing credentials, auth files, session dumps, gat
 
 - Explicit runtime/profile selection for non-interactive writes
 - Dry-run plan before mutation
-- Clean Git checkout requirement
-- Rollback branch before patching
+- Capability probes before install on stock Hermes
+- Config/bridge backups under `$HERMES_HOME/cursor-native/backups/`
 - SHA256 verification of bridge archives
 - Tar traversal, symlink, and non-regular-entry rejection
 - Loopback/local bridge design
@@ -24,10 +24,10 @@ Do not open public issues containing credentials, auth files, session dumps, gat
 ## Operator responsibilities
 
 - Review the dry run.
-- Close active Hermes backends before source patching.
-- Complete OAuth personally.
-- Keep the deployment branch and recovery refs.
-- Review upstream conflicts before merging updates.
+- Close or restart active Hermes backends before plugin install when they cache provider state.
+- Complete OAuth personally; never duplicate an in-progress user login.
+- Keep config/bridge backups until live verification passes.
+- Re-run capability probes after major Hermes upgrades.
 - Never expose bridge or backend ports publicly without authentication and a separate security review.
 
 ## Threat model

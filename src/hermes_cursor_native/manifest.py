@@ -1,21 +1,35 @@
-"""Versioned install-manifest loading."""
+"""Install-manifest loading for the Cursor model-provider plugin."""
 
 from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
-from .install_plan import InstallManifest
+
+@dataclass(frozen=True)
+class InstallManifest:
+    version: str
+    artifacts: dict[str, dict[str, str]]
+    bridge_version: str = ""
+    plugin_commit: str = ""
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> InstallManifest:
+        return cls(
+            version=str(payload["version"]),
+            artifacts={
+                str(key): {str(k): str(v) for k, v in value.items()}
+                for key, value in payload["artifacts"].items()
+            },
+            bridge_version=str(payload.get("bridge_version", "")),
+            plugin_commit=str(payload.get("plugin_commit", "")),
+        )
+
 
 _SHA256_RE = re.compile(r"[0-9a-fA-F]{64}")
-_COMMIT_RE = re.compile(r"[0-9a-fA-F]{40}")
-_SUPPORTED_PATCH_SERIES = (
-    "0001-feat-providers-Cursor-subscription-support-via-the-o.patch",
-    "0002-fix-cursor-support-SDK-bridge-on-Windows.patch",
-    "0003-fix-cli-select-provider-default-model-on-override.patch",
-    "0004-fix-cursor-harden-bridge-trust-boundaries.patch",
-)
 
 
 def _basename(value: object, label: str, suffix: str = "") -> str:
@@ -28,20 +42,8 @@ def _basename(value: object, label: str, suffix: str = "") -> str:
 
 
 def _validate_manifest(payload: dict) -> None:
-    bases = payload.get("base_commits")
-    if not isinstance(bases, list) or not bases or any(
-        _COMMIT_RE.fullmatch(str(item)) is None for item in bases
-    ):
-        raise ValueError("Invalid base commit in install manifest")
-
-    patches = payload.get("patch_series")
-    if not isinstance(patches, list) or not patches:
-        raise ValueError("Missing patch series")
-    names = [_basename(item, "patch name", ".patch") for item in patches]
-    if len(names) != len(set(names)):
-        raise ValueError("Duplicate patch name in install manifest")
-    if tuple(names) != _SUPPORTED_PATCH_SERIES:
-        raise ValueError("Unsupported patch series or patch order")
+    if payload.get("schema_version") not in {1, 2}:
+        raise ValueError(f"Unsupported install manifest schema: {payload.get('schema_version')!r}")
 
     artifacts = payload.get("artifacts")
     if not isinstance(artifacts, dict) or not artifacts:
@@ -55,26 +57,21 @@ def _validate_manifest(payload: dict) -> None:
         if not str(artifact.get("url", "")).startswith("https://"):
             raise ValueError("Artifact URL must use HTTPS")
 
-    provider_hashes = payload.get("provider_file_sha256")
-    if not isinstance(provider_hashes, dict) or not provider_hashes:
-        raise ValueError("Missing provider file hashes")
-    for relative, digest in provider_hashes.items():
-        path = str(relative)
-        if not path or "\\" in path or path.startswith("/") or ".." in path.split("/"):
-            raise ValueError(f"Unsafe provider file path: {path!r}")
-        if _SHA256_RE.fullmatch(str(digest)) is None:
-            raise ValueError(f"Invalid provider SHA256 for {path}")
-
 
 def repository_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
 def package_data_root() -> Path:
+    repo = repository_root()
+    if (repo / "plugin" / "model-providers" / "cursor").is_dir():
+        return repo
     installed = Path(__file__).resolve().parent
+    if (installed / "plugin" / "model-providers" / "cursor").is_dir():
+        return installed
     if (installed / "install-manifest.json").is_file():
         return installed
-    return repository_root()
+    return repo
 
 
 def default_manifest_path() -> Path:
@@ -84,7 +81,5 @@ def default_manifest_path() -> Path:
 def load_manifest(path: Path | None = None) -> InstallManifest:
     manifest_path = path or default_manifest_path()
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if payload.get("schema_version") != 1:
-        raise ValueError(f"Unsupported install manifest schema: {payload.get('schema_version')!r}")
     _validate_manifest(payload)
     return InstallManifest.from_dict(payload)

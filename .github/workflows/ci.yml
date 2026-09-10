@@ -42,40 +42,29 @@ jobs:
         if: runner.os != 'Windows'
         run: bash -n install.sh
 
-  hermes-patch-compatibility:
+  stock-hermes-contract:
+    strategy:
+      fail-fast: false
+      matrix:
+        hermes-ref: [ead7e91dabf1e963796ec834b196984a2fa44ff4, main]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
         with:
           python-version: "3.11"
-      - name: Read declared Hermes base
-        id: manifest
+      - name: Clone stock Hermes Agent
         run: |
-          echo "base=$(python -c 'import json; print(json.load(open("install-manifest.json"))["base_commits"][0])')" >> "$GITHUB_OUTPUT"
-      - name: Apply patch series
-        run: |
-          git clone --filter=blob:none https://github.com/NousResearch/hermes-agent.git "$RUNNER_TEMP/hermes-agent"
-          git -C "$RUNNER_TEMP/hermes-agent" checkout "${{ steps.manifest.outputs.base }}"
-          git -C "$RUNNER_TEMP/hermes-agent" config user.name "Hermes Cursor Native CI"
-          git -C "$RUNNER_TEMP/hermes-agent" config user.email "actions@users.noreply.github.com"
-          python -c 'import json; print("\n".join(json.load(open("install-manifest.json"))["patch_series"]))' > "$RUNNER_TEMP/patch-series.txt"
-          while IFS= read -r patch; do
-            git -C "$RUNNER_TEMP/hermes-agent" am "$GITHUB_WORKSPACE/patches/hermes/0.20.5/$patch"
-          done < "$RUNNER_TEMP/patch-series.txt"
-      - name: Verify manifest-pinned provider blobs
-        run: |
-          python -c 'import hashlib,json,os,subprocess; m=json.load(open("install-manifest.json")); root=os.path.join(os.environ["RUNNER_TEMP"],"hermes-agent"); bad=[p for p,h in m["provider_file_sha256"].items() if hashlib.sha256(subprocess.check_output(["git","-C",root,"show",f"HEAD:{p}"])).hexdigest()!=h]; assert not bad, f"provider hash mismatch: {bad}"'
-      - name: Install Hermes test dependencies
+          git init "$RUNNER_TEMP/hermes-agent"
+          git -C "$RUNNER_TEMP/hermes-agent" remote add origin https://github.com/NousResearch/hermes-agent.git
+          git -C "$RUNNER_TEMP/hermes-agent" fetch --depth 1 origin "${{ matrix.hermes-ref }}"
+          git -C "$RUNNER_TEMP/hermes-agent" checkout --detach FETCH_HEAD
+      - name: Install Hermes dependencies
         working-directory: ${{ runner.temp }}/hermes-agent
         run: uv sync --extra dev
-      - name: Run embedded Cursor tests
-        working-directory: ${{ runner.temp }}/hermes-agent
+      - name: Run plugin contract tests
+        env:
+          HERMES_AGENT_ROOT: ${{ runner.temp }}/hermes-agent
         run: |
-          uv run pytest -o addopts= -q \
-            tests/agent/test_cursor_bridge_wire.py \
-            tests/agent/test_cursor_bridge_transport.py \
-            tests/agent/test_cursor_bridge_client.py \
-            tests/agent/test_cursor_sdk_auth.py \
-            tests/hermes_cli/test_cursor_provider.py \
-            tests/cli/test_cli_provider_resolution.py
+          uv sync --extra dev
+          uv run pytest -q tests/test_capabilities.py tests/test_client_contract.py tests/test_auth_shim.py tests/test_ui_integration.py tests/test_native_plugin.py

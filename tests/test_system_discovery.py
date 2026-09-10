@@ -24,6 +24,48 @@ def test_infer_source_root_from_windows_venv_executable() -> None:
     )
 
 
+def test_path_hermes_honors_explicit_home_before_estate_exists(tmp_path) -> None:
+    custom_home = tmp_path / "new-estate"
+    checkout = tmp_path / "checkout" / "hermes-agent"
+    executable = checkout / "venv" / "bin" / "hermes"
+    existing = {checkout, executable}
+
+    candidates = collect_candidates(
+        platform_name="linux",
+        env={"HERMES_HOME": str(custom_home)},
+        which_hermes=lambda: executable,
+        exists=lambda path: path in existing,
+        wsl_estates=lambda: [],
+    )
+
+    path_candidate = next(
+        candidate for candidate in candidates if candidate.runtime_id == "path-hermes"
+    )
+    assert path_candidate.home == custom_home
+    assert not custom_home.exists()
+
+
+def test_path_hermes_honors_explicit_home_when_default_missing(tmp_path) -> None:
+    custom_home = tmp_path / "custom-estate"
+    custom_home.mkdir()
+    checkout = tmp_path / "checkout" / "hermes-agent"
+    executable = checkout / "venv" / "bin" / "hermes"
+    existing = {custom_home, checkout, executable}
+
+    candidates = collect_candidates(
+        platform_name="linux",
+        env={"HERMES_HOME": str(custom_home)},
+        which_hermes=lambda: executable,
+        exists=lambda path: path in existing,
+        wsl_estates=lambda: [],
+    )
+
+    path_candidate = next(
+        candidate for candidate in candidates if candidate.runtime_id == "path-hermes"
+    )
+    assert path_candidate.home == custom_home
+
+
 def test_collect_windows_current_legacy_desktop_override_path_and_wsl() -> None:
     env = {
         "LOCALAPPDATA": "C:/Users/test/AppData/Local",

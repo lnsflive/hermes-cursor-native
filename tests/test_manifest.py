@@ -5,52 +5,19 @@ from pathlib import Path
 
 import pytest
 
-from hermes_cursor_native.manifest import load_manifest
+from hermes_cursor_native.manifest import default_manifest_path, load_manifest
 
 
-def test_repository_manifest_references_existing_patches_and_valid_hashes() -> None:
-    root = Path(__file__).resolve().parents[1]
-    manifest = load_manifest(root / "install-manifest.json")
-    patch_root = root / "patches/hermes/0.20.5"
-
-    assert manifest.version == "0.1.0a1"
-    assert manifest.supported_hermes == ("0.20.5",)
-    assert all((patch_root / name).is_file() for name in manifest.patch_series)
-    assert all(len(artifact["sha256"]) == 64 for artifact in manifest.artifacts.values())
-    assert all(artifact["url"].startswith("https://") for artifact in manifest.artifacts.values())
-    assert len(manifest.provider_file_sha256) == 25
-    assert all(len(digest) == 64 for digest in manifest.provider_file_sha256.values())
+def test_repository_manifest_loads_bridge_artifacts() -> None:
+    manifest = load_manifest(default_manifest_path())
+    assert manifest.version
+    assert manifest.artifacts["linux-x64"]["url"].startswith("https://")
 
 
-@pytest.mark.parametrize(
-    ("mutation", "message"),
-    [
-        (lambda payload: payload.update(patch_series=["../escape.patch"]), "patch name"),
-        (
-            lambda payload: payload["artifacts"]["windows-x64"].update(sha256="bad"),
-            "artifact SHA256",
-        ),
-        (
-            lambda payload: payload["artifacts"]["windows-x64"].update(
-                url="http://example.invalid/bridge"
-            ),
-            "HTTPS",
-        ),
-        (lambda payload: payload.update(base_commits=["short"]), "base commit"),
-        (
-            lambda payload: payload.update(
-                patch_series=list(reversed(payload["patch_series"]))
-            ),
-            "patch series",
-        ),
-    ],
-)
-def test_manifest_rejects_unsafe_structure(tmp_path: Path, mutation, message: str) -> None:
-    root = Path(__file__).resolve().parents[1]
-    payload = json.loads((root / "install-manifest.json").read_text(encoding="utf-8"))
-    mutation(payload)
-    path = tmp_path / "invalid.json"
+def test_manifest_rejects_invalid_artifact_hash(tmp_path: Path) -> None:
+    payload = json.loads(default_manifest_path().read_text(encoding="utf-8"))
+    payload["artifacts"]["linux-x64"]["sha256"] = "bad"
+    path = tmp_path / "manifest.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
-
-    with pytest.raises(ValueError, match=message):
+    with pytest.raises(ValueError, match="SHA256"):
         load_manifest(path)

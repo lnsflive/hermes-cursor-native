@@ -1,5 +1,5 @@
 param(
-  [string]$Ref = $(if ($env:HCN_REF) { $env:HCN_REF } else { "v0.1.0-alpha.1" })
+  [string]$Ref = $(if ($env:HCN_REF) { $env:HCN_REF } else { "main" })
 )
 
 $ErrorActionPreference = "Stop"

@@ -74,7 +74,7 @@ def collect_candidates(
         )
 
     explicit_home = env.get("HERMES_HOME", "").strip()
-    if explicit_home and exists(Path(explicit_home)):
+    if explicit_home:
         home = Path(explicit_home)
         root = home / "hermes-agent"
         candidates.append(
@@ -143,12 +143,20 @@ def collect_candidates(
     path_executable = which_hermes()
     if path_executable is not None:
         source_root = infer_source_root(path_executable)
+        if explicit_home:
+            home = Path(explicit_home)
+        elif exists(Path.home() / ".hermes"):
+            home = Path.home() / ".hermes"
+        elif source_root is not None:
+            home = source_root.parent
+        else:
+            home = Path.home()
         candidates.append(
             Candidate(
                 "path-hermes",
                 "cli",
                 platform_name,
-                source_root.parent if source_root else Path.home(),
+                home,
                 source_root,
                 path_executable,
                 True,
@@ -174,9 +182,7 @@ _VERSION_RE = re.compile(r"Hermes Agent v([^\s]+)")
 _ROOT_RE = re.compile(r"^(?:Install directory|Project):\s*(.+?)\s*$", re.MULTILINE)
 
 
-def parse_version_output(
-    output: str, *, path_style: str = "native"
-) -> tuple[str, PurePath | None]:
+def parse_version_output(output: str, *, path_style: str = "native") -> tuple[str, PurePath | None]:
     version_match = _VERSION_RE.search(output)
     root_match = _ROOT_RE.search(output)
     version = version_match.group(1) if version_match else ""

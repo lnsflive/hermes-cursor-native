@@ -90,18 +90,33 @@ class RuntimeDiscovery:
         self._probe = probe
 
     def classify(self, candidates: Iterable[Candidate]) -> list[Runtime]:
-        groups: dict[tuple[str, str], list[Candidate]] = {}
-        for candidate in candidates:
-            groups.setdefault(_identity(candidate), []).append(candidate)
+        probed_pairs = [(candidate, self._probe(candidate)) for candidate in candidates]
+        groups: dict[tuple[str, str], list[tuple[Candidate, ProbeResult]]] = {}
+        for candidate, probe in probed_pairs:
+            source_root = probe.source_root or candidate.source_root
+            identity_candidate = Candidate(
+                candidate.runtime_id,
+                candidate.surface,
+                candidate.platform,
+                candidate.home,
+                source_root,
+                probe.executable or candidate.executable,
+                candidate.active_hint,
+            )
+            groups.setdefault(_identity(identity_candidate), []).append((candidate, probe))
 
         runtimes: list[Runtime] = []
         for group in groups.values():
-            primary = group[0]
-            probe = self._probe(primary)
-            surfaces = tuple(dict.fromkeys(candidate.surface for candidate in group))
-            active = any(candidate.active_hint for candidate in group)
-            source_root = probe.source_root or primary.source_root
-            executable = probe.executable or primary.executable
+            primary = next(
+                (candidate for candidate, _ in group if candidate.runtime_id == "explicit-home"),
+                group[0][0],
+            )
+            selected, probe = next((pair for pair in group if pair[1].usable), group[0])
+            surfaces = tuple(dict.fromkeys(candidate.surface for candidate, _ in group))
+            active = any(candidate.active_hint for candidate, _ in group)
+            source_root = probe.source_root or selected.source_root
+            executable = probe.executable or selected.executable
+            home = primary.home
 
             if probe.usable and active:
                 status = "active"
@@ -117,7 +132,7 @@ class RuntimeDiscovery:
                     runtime_id=primary.runtime_id,
                     surfaces=surfaces,
                     platform=primary.platform,
-                    home=primary.home,
+                    home=home,
                     source_root=source_root,
                     executable=executable,
                     version=probe.version,

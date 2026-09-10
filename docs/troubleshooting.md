@@ -2,32 +2,45 @@
 
 ## Provider appears but bridge is missing
 
-Run discovery and inspect the active profile. `cursor_bridge.command` must be an absolute path in that profile's config. Do not rely on PATH across Desktop, gateway, service, and shell processes.
+Run `hermes-cursor-native status --json`. `bridge_installed` must be true and `cursor_bridge.command` in the active profile must be an absolute path. Re-run `install` if the bridge tree was removed.
 
 ## Unknown provider `cursor`
 
-The active backend does not contain the provider patch or is a long-running process started before installation. Confirm the executable/source root with `discover --json`, then restart that backend.
+The active backend was started before plugin install or `$HERMES_HOME` does not contain `plugins/model-providers/cursor/`. Confirm with `discover --json` and `status --json`, then restart long-running gateways/backends.
+
+## Capability probes fail at install time
+
+| Symptom | Likely cause |
+|---------|----------------|
+| `plugin_seam` false | Hermes version too old; missing `ProviderProfile.create_client` |
+| `provider_client_seam` false | Stock Hermes does not route provider clients |
+| `plugin_registered` false | Plugin files missing or unreadable under `$HERMES_HOME` |
+| `client_contract` false | Plugin load error; shared venv unreadable for non-root user |
+
+For shared `/usr/local/lib/hermes-agent` installs, non-root users need traverse/read on `venv/lib/python3.11/site-packages` (diagnose with `namei -l` on a package `__init__.py`).
 
 ## Works in CLI but not Desktop
 
-Determine which `hermes serve` backend Desktop resolved. The Electron `Hermes.exe` path is not proof of backend identity. Remote/cloud Desktop connections require installation on the remote backend.
+Determine which `hermes serve` backend Desktop resolved. Remote/cloud Desktop connections require installation on the remote backend's `$HERMES_HOME`.
 
 ## Windows and WSL disagree
 
 They are independent installations and auth stores. Run discovery, then execute installation inside WSL for `wsl:<distro>` targets.
 
-## Dirty checkout
+## OAuth expired or logged out
 
-The installer refuses mutation. Commit, stash, or choose another clean runtime. Never bypass this check with destructive reset/clean commands.
+Run `hermes-cursor-native login --runtime <id> --hermes-home <path>` under the operating-system account that owns the estate. Do not copy another user's auth file. Do not start duplicate login if the user already has a browser flow open.
 
-## Existing deployment branch diverges
+## Offline probes pass but chat fails
 
-Reconcile `cursor-provider-deployed` manually. The installer refuses to switch to a stale branch.
+Offline `contract_checks` do not prove live inference. After OAuth, verify:
 
-## OAuth expired
+```text
+hermes auth status cursor
+hermes-cursor-native status --json
+hermes chat --provider cursor -m "ping"
+```
 
-Run `hermes cursor login` under the operating-system account that owns the active backend. Do not copy another user's auth file.
+## Install blocked: runtime not ready
 
-## Update conflict
-
-Stop and preserve both branches. Rebase or merge the manifest-listed provider patch series onto the new upstream in a disposable worktree, run the full test/smoke matrix, then move the deployed branch.
+`install` refuses when capability probes fail. Fix the underlying seam (Hermes version, plugin path, venv permissions) before retrying. Do not bypass with core patches unless maintaining a legacy deployment.

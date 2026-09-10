@@ -197,3 +197,96 @@ def test_select_runtime_rejects_unknown_runtime(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeNotFoundError):
         select_runtime(runtimes, requested="does-not-exist")
+
+
+@pytest.mark.parametrize("usable_first", [False, True])
+def test_alias_collapse_retains_usable_probe(tmp_path, usable_first):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "config.yaml").touch()
+    root = tmp_path / "source"
+    broken = Candidate("explicit-home", "explicit", "linux", home, root,
+                       root / "venv/bin/hermes", True)
+    working = Candidate("path-hermes", "path", "linux", home, None,
+                        root / ".venv/bin/hermes")
+    candidates = [working, broken] if usable_first else [broken, working]
+
+    def probe(candidate):
+        return ProbeResult(candidate == working, "working" if candidate == working else "",
+                           root, candidate.executable)
+
+    runtimes = RuntimeDiscovery(probe=probe).classify(candidates)
+    assert len(runtimes) == 1
+    runtime = select_runtime(runtimes)
+    assert runtime.usable and runtime.status == "active"
+    assert runtime.version == "working"
+    assert runtime.executable == working.executable
+    assert runtime.source_root == root
+    assert runtime.home == home
+    assert set(runtime.surfaces) == {"explicit", "path"}
+
+
+def test_path_hermes_collapses_with_explicit_home(tmp_path):
+    custom_home = tmp_path / "custom-estate"
+    custom_home.mkdir()
+    checkout = tmp_path / "checkout"
+    executable = checkout / "venv" / "bin" / "hermes"
+    explicit = Candidate(
+        "explicit-home",
+        "cli",
+        "linux",
+        custom_home,
+        custom_home / "hermes-agent",
+        custom_home / "hermes-agent/venv/bin/hermes",
+        True,
+    )
+    path = Candidate(
+        "path-hermes",
+        "path",
+        "linux",
+        custom_home,
+        checkout,
+        executable,
+    )
+
+    def probe(candidate):
+        return ProbeResult(
+            candidate == path,
+            "0.21.1",
+            checkout,
+            candidate.executable,
+        )
+
+    runtime = select_runtime(RuntimeDiscovery(probe=probe).classify([explicit, path]))
+    assert runtime.runtime_id == "explicit-home"
+    assert runtime.home == custom_home
+    assert runtime.executable == executable
+    assert runtime.usable
+
+
+@pytest.mark.parametrize("explicit_first", [True, False])
+@pytest.mark.parametrize("other_config", [True, False])
+def test_aliases_preserve_unconfigured_explicit_home(tmp_path, explicit_first, other_config):
+    home = tmp_path / "requested"
+    unrelated = tmp_path / ".hermes"
+    home.mkdir()
+    unrelated.mkdir()
+    if other_config:
+        (unrelated / "config.yaml").write_text("unrelated estate")
+    source = tmp_path / "shared-checkout"
+    explicit = Candidate("explicit-home", "cli", "linux", home, home / "hermes-agent",
+                         home / "hermes-agent/venv/bin/hermes", True)
+    path = Candidate("path-hermes", "path", "linux", unrelated, source,
+                     source / ".venv/bin/hermes")
+
+    def probe(candidate):
+        return ProbeResult(candidate == path, "test", source, candidate.executable)
+
+    candidates = [explicit, path] if explicit_first else [path, explicit]
+    runtime = select_runtime(RuntimeDiscovery(probe=probe).classify(candidates))
+    assert runtime.runtime_id == "explicit-home"
+    assert runtime.home == home
+    assert runtime.executable == path.executable
+    assert not (home / "config.yaml").exists()
+    if other_config:
+        assert (unrelated / "config.yaml").read_text() == "unrelated estate"

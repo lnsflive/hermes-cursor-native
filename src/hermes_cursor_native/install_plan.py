@@ -1,56 +1,86 @@
-"""Fail-closed installation planning.
-
-Planning is pure: it describes every intended write before an executor performs
-any mutation. OAuth credentials are never included in plan data.
-"""
+"""Fail-closed installation planning for the Cursor model-provider plugin."""
 
 from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict, dataclass, field
-from pathlib import Path
+from dataclasses import asdict, dataclass
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
+from .capabilities import CapabilityReport, probe_runtime
 from .discovery import Runtime
+from .manifest import InstallManifest
 
 
 class InstallBlockedError(RuntimeError):
     """Raised when installation preconditions are not satisfied."""
 
 
-@dataclass(frozen=True)
-class GitState:
-    clean: bool
-    branch: str
-    head: str
+def resolve_profile_home(hermes_home: Path, profile: str) -> Path:
+    """Return the resolved profile estate root, rejecting symlink escapes."""
+    validate_profile_name(profile)
+    base = hermes_home.expanduser().resolve()
+    if profile == "default":
+        return base
+    profiles_root = (base / "profiles").resolve()
+    try:
+        profiles_root.relative_to(base)
+    except ValueError:
+        raise InstallBlockedError(
+            f"Hermes profiles directory resolves outside {base}"
+        ) from None
+    selected = (profiles_root / profile).resolve()
+    try:
+        selected.relative_to(profiles_root)
+    except ValueError:
+        raise InstallBlockedError(
+            f"Hermes profile {profile!r} resolves outside {profiles_root}"
+        ) from None
+    return selected
 
 
-@dataclass(frozen=True)
-class InstallManifest:
-    version: str
-    supported_hermes: tuple[str, ...]
-    base_commits: tuple[str, ...]
-    artifacts: dict[str, dict[str, str]]
-    patch_series: tuple[str, ...]
-    provider_file_sha256: dict[str, str] = field(default_factory=dict)
+def resolve_plugin_path(plugin_home: Path) -> Path:
+    """Return the resolved cursor plugin path, rejecting symlink escapes."""
+    base = plugin_home.expanduser().resolve()
+    plugins_root = (base / "plugins").resolve()
+    try:
+        plugins_root.relative_to(base)
+    except ValueError:
+        raise InstallBlockedError(
+            f"Hermes plugins directory resolves outside {base}"
+        ) from None
+    model_providers = (plugins_root / "model-providers").resolve()
+    try:
+        model_providers.relative_to(plugins_root)
+    except ValueError:
+        raise InstallBlockedError(
+            "Hermes model-providers directory resolves outside plugins"
+        ) from None
+    cursor_plugin = (model_providers / "cursor").resolve()
+    try:
+        cursor_plugin.relative_to(model_providers)
+    except ValueError:
+        raise InstallBlockedError(
+            "Cursor plugin directory resolves outside model-providers"
+        ) from None
+    return cursor_plugin
 
-    @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> InstallManifest:
-        return cls(
-            version=str(payload["version"]),
-            supported_hermes=tuple(str(item) for item in payload["supported_hermes"]),
-            base_commits=tuple(str(item) for item in payload.get("base_commits", [])),
-            artifacts={
-                str(key): {str(k): str(v) for k, v in value.items()}
-                for key, value in payload["artifacts"].items()
-            },
-            patch_series=tuple(str(item) for item in payload["patch_series"]),
-            provider_file_sha256={
-                str(key): str(value).lower()
-                for key, value in payload["provider_file_sha256"].items()
-            },
-        )
+
+def validate_profile_name(profile: str) -> None:
+    """Reject profile values that escape ``<HERMES_HOME>/profiles`` when joined."""
+    if profile == "default":
+        return
+    if not profile or profile in {".", ".."}:
+        raise InstallBlockedError(f"Invalid Hermes profile name: {profile!r}")
+    posix = PurePosixPath(profile)
+    windows = PureWindowsPath(profile)
+    if len(posix.parts) != 1 or len(windows.parts) != 1:
+        raise InstallBlockedError(f"Invalid Hermes profile name: {profile!r}")
+    if posix.is_absolute() or windows.is_absolute():
+        raise InstallBlockedError(f"Invalid Hermes profile name: {profile!r}")
+    if posix.parts[0] in {".", ".."} or windows.parts[0] in {".", ".."}:
+        raise InstallBlockedError(f"Invalid Hermes profile name: {profile!r}")
 
 
 @dataclass(frozen=True)
@@ -66,12 +96,11 @@ class InstallPlan:
     manifest_version: str
     artifact_key: str
     artifact: dict[str, str]
-    patch_series: tuple[str, ...]
-    provider_file_sha256: dict[str, str]
-    original_branch: str
-    original_head: str
     executable_sha256: str
     operations: tuple[InstallOperation, ...]
+    capabilities: CapabilityReport
+    switch_default_model: bool = False
+    run_oauth: bool = False
     requires_approval: bool = True
 
     def to_dict(self) -> dict[str, Any]:
@@ -83,6 +112,20 @@ class InstallPlan:
         payload["runtime"]["executable"] = (
             str(self.runtime.executable) if self.runtime.executable else None
         )
+        caps = payload.pop("capabilities")
+        payload["capabilities"] = {
+            "runtime_id": caps["runtime_id"],
+            "hermes_version": caps["hermes_version"],
+            "source_root": str(caps["source_root"]) if caps["source_root"] else None,
+            "plugin_seam": caps["plugin_seam"],
+            "provider_client_seam": caps["provider_client_seam"],
+            "plugin_registered": caps["plugin_registered"],
+            "client_contract": caps["client_contract"],
+            "interface_ready": self.capabilities.interface_ready,
+            "plugin_ready": self.capabilities.plugin_ready,
+            "blockers": self.capabilities.blockers(),
+            "notes": list(caps["notes"]),
+        }
         return payload
 
     def to_json(self) -> str:
@@ -104,41 +147,25 @@ def build_install_plan(
     runtime: Runtime,
     manifest: InstallManifest,
     profile: str,
-    git_state: GitState | None,
     architecture: str,
-    provider_installed: bool = False,
     profile_exists: bool = True,
+    capability_report: CapabilityReport | None = None,
+    switch_default_model: bool = False,
+    run_oauth: bool = False,
 ) -> InstallPlan:
-    if not runtime.usable or runtime.source_root is None or runtime.executable is None:
+    validate_profile_name(profile)
+    if not runtime.usable or runtime.executable is None:
         raise InstallBlockedError(f"Hermes runtime {runtime.runtime_id!r} is not usable")
-    if runtime.version not in manifest.supported_hermes:
-        supported = ", ".join(manifest.supported_hermes)
-        raise InstallBlockedError(
-            f"Hermes {runtime.version or 'unknown'} is unsupported; tested versions: {supported}"
-        )
     if profile != "default" and not profile_exists:
         raise InstallBlockedError(
             f"Hermes profile {profile!r} does not exist; create it separately before install"
         )
-    if git_state is None:
+
+    capabilities = capability_report or probe_runtime(runtime)
+    if not capabilities.plugin_ready:
+        blockers = ", ".join(capabilities.blockers()) or "unknown capability gap"
         raise InstallBlockedError(
-            "A Git-backed Hermes source checkout is required for alpha patch mode"
-        )
-    if not git_state.clean:
-        raise InstallBlockedError("Hermes source checkout is dirty; commit or stash changes first")
-    maintained_branch = git_state.branch == "cursor-provider-deployed"
-    if maintained_branch and not provider_installed:
-        raise InstallBlockedError(
-            "Maintained branch requires complete provider validation before reconfiguration"
-        )
-    compatible_base = any(
-        git_state.head.startswith(base) or base.startswith(git_state.head)
-        for base in manifest.base_commits
-    )
-    if not maintained_branch and manifest.base_commits and not compatible_base:
-        expected = ", ".join(manifest.base_commits)
-        raise InstallBlockedError(
-            f"Hermes base commit {git_state.head} is not supported; expected one of: {expected}"
+            f"Hermes {runtime.version or 'unknown'} is not ready for the Cursor plugin: {blockers}"
         )
 
     artifact_key = f"{_artifact_platform(runtime.platform)}-{architecture}"
@@ -150,29 +177,39 @@ def build_install_plan(
     if isinstance(runtime.executable, Path) and runtime.executable.is_file():
         executable_sha256 = hashlib.sha256(runtime.executable.read_bytes()).hexdigest()
 
+    configure_note = (
+        f"Switch profile {profile!r} default model to Cursor"
+        if switch_default_model
+        else f"Install bridge settings for profile {profile!r} without changing default model"
+    )
     operations = (
-        InstallOperation("backup", "Create a rollback reference and config snapshot"),
+        InstallOperation("backup", "Snapshot profile config before provider install"),
         InstallOperation(
-            "branch", "Create or update the maintained cursor-provider-deployed branch"
+            "plugin",
+            "Install the Cursor model-provider plugin into "
+            "$HERMES_HOME/plugins/model-providers/cursor",
         ),
-        InstallOperation("patch", "Apply the versioned Cursor provider patch series"),
         InstallOperation("bridge", f"Download and verify {artifact['filename']}"),
-        InstallOperation("configure", f"Configure Hermes profile {profile!r} in loop tool mode"),
-        InstallOperation("oauth", "Launch Cursor browser OAuth without exposing credentials"),
+        InstallOperation("configure", configure_note),
         InstallOperation(
-            "verify", "Run Composer, Grok, automatic-routing, and hidden-nonce tool smokes"
+            "oauth",
+            "Optional browser OAuth (skipped unless --oauth); never prints stored credentials",
+        ),
+        InstallOperation(
+            "verify",
+            "Verify plugin registration, auth status, and client streaming/tool contract",
         ),
     )
+
     return InstallPlan(
         runtime=runtime,
         profile=profile,
         manifest_version=manifest.version,
         artifact_key=artifact_key,
         artifact=dict(artifact),
-        patch_series=manifest.patch_series,
-        provider_file_sha256=dict(manifest.provider_file_sha256),
-        original_branch=git_state.branch,
-        original_head=git_state.head,
         executable_sha256=executable_sha256,
         operations=operations,
+        capabilities=capabilities,
+        switch_default_model=switch_default_model,
+        run_oauth=run_oauth,
     )

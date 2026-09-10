@@ -1,44 +1,45 @@
 # Update Survival and Rollback
 
-## Alpha patch mode
+## Plugin-only installs
 
-The installer creates:
+The installer writes under `$HERMES_HOME` only:
 
-- backup branch `backup/hermes-cursor-native-<timestamp>`
-- maintained branch `cursor-provider-deployed`
-- profile config backup under `<HERMES_HOME>/cursor-native/backups/<timestamp>/config.yaml`
+- `plugins/model-providers/cursor/`
+- `cursor-sdk-bridge/`
+- `cursor-native/backups/<timestamp>/` (config and prior bridge snapshots)
 
-It configures:
+It does **not** modify the Hermes source checkout, Git branches, or core packages.
 
-```yaml
-updates:
-  parked_branch_strategy: update_in_place
-```
+## Updating this repository
+
+Re-run `install` after pulling a newer `hermes-cursor-native` to refresh the plugin and bridge. Re-run capability probes and, after OAuth, live verification.
 
 ## Updating Hermes
 
-Run normal `hermes update` only while the checkout is on `cursor-provider-deployed`. Upstream is merged into the maintained branch. Conflicts must stop for manual reconciliation.
-
-Never use `hermes update --switch-branch` unless intentionally disabling the provider.
-
-After an update, verify:
+Run normal `hermes update` on the shared or per-estate checkout. The plugin under `$HERMES_HOME` survives stock updates. After a major Hermes upgrade:
 
 ```text
 hermes --version
-hermes chat --provider cursor -m composer-2.5 -q "Reply exactly UPDATE_OK" -Q
-hermes chat --provider cursor -m grok-4.6 -q "Reply exactly GROK_UPDATE_OK" -Q
+hermes-cursor-native status --runtime <id> --hermes-home <path> --json
+```
+
+If capability probes fail on the new version, stop and reconcile before production use.
+
+After OAuth, live smoke:
+
+```text
+hermes auth status cursor
+hermes chat --provider cursor -m "Reply exactly UPDATE_OK" --max-tokens 20
 ```
 
 ## Rollback
 
-1. Stop Desktop-managed backends and gateways using the target checkout.
-2. Switch to the recorded backup branch.
-3. Restore the recorded config backup.
+1. Stop gateways/backends using the target `$HERMES_HOME`.
+2. Restore config from `<HERMES_HOME>/cursor-native/backups/<timestamp>/config.yaml`.
+3. Remove or restore `plugins/model-providers/cursor/` and `cursor-sdk-bridge/` from the same backup if needed.
 4. Restart the backend/gateway.
-5. Verify the previous provider still works.
+5. Verify the previous provider configuration still works.
 
-Do not reset or clean an unknown dirty checkout. Preserve the failed deployment branch for diagnostics.
+## Historical patch mode
 
-## Compatibility updates
-
-Each Hermes base needs a newly tested patch series. Never reuse a patch merely because the version string is unchanged; the manifest base commit is enforced.
+Legacy patch-based deployments used `cursor-provider-deployed` branches and `git am`. That path is **not** supported by the current installer. See Git history for provenance.
