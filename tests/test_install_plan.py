@@ -65,6 +65,18 @@ def _linux_runtime(root: Path) -> Runtime:
 
 
 @pytest.mark.skipif(os.name == "nt", reason="symlink creation requires elevation on Windows")
+def test_resolve_profile_home_rejects_symlinked_profiles_root(tmp_path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    outside_profiles = tmp_path / "outside-profiles"
+    outside_profiles.mkdir()
+    (home / "profiles").symlink_to(outside_profiles, target_is_directory=True)
+    (outside_profiles / "work").mkdir()
+
+    with pytest.raises(InstallBlockedError, match="profiles directory resolves outside"):
+        resolve_profile_home(home, "work")
+
+
 def test_resolve_profile_home_rejects_symlink_escape(tmp_path) -> None:
     home = tmp_path / "home"
     profiles = home / "profiles"

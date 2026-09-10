@@ -24,6 +24,12 @@ def resolve_profile_home(hermes_home: Path, profile: str) -> Path:
     if profile == "default":
         return base
     profiles_root = (base / "profiles").resolve()
+    try:
+        profiles_root.relative_to(base)
+    except ValueError:
+        raise InstallBlockedError(
+            f"Hermes profiles directory resolves outside {base}"
+        ) from None
     selected = (profiles_root / profile).resolve()
     try:
         selected.relative_to(profiles_root)
