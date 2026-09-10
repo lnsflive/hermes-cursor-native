@@ -442,7 +442,7 @@ class CursorBridgeClient:
 
             if not self.api_key or self.api_key == "cursor":
                 # Fall back to the SDK's shared credential store, filled by
-                # `hermes cursor login` (or any Cursor SDK login).
+                # `hermes model`, `hermes-cursor-native login`, or any SDK login.
                 from .cursor_sdk_auth import read_sdk_credentials
 
                 stored = read_sdk_credentials()
@@ -450,8 +450,8 @@ class CursorBridgeClient:
                     self.api_key = str(stored["apiKey"])
                 else:
                     raise CursorBridgeError(
-                        "No Cursor credential available. Run `hermes cursor login` "
-                        "(browser login on your Cursor account), or add "
+                        "No Cursor credential available. Run `hermes model` and pick "
+                        "Cursor to sign in, `hermes-cursor-native login`, or add "
                         "CURSOR_API_KEY to ~/.hermes/.env "
                         "(cursor.com/dashboard → API Keys)."
                     )

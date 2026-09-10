@@ -226,6 +226,44 @@ def test_alias_collapse_retains_usable_probe(tmp_path, usable_first):
     assert set(runtime.surfaces) == {"explicit", "path"}
 
 
+def test_path_hermes_collapses_with_explicit_home(tmp_path):
+    custom_home = tmp_path / "custom-estate"
+    custom_home.mkdir()
+    checkout = tmp_path / "checkout"
+    executable = checkout / "venv" / "bin" / "hermes"
+    explicit = Candidate(
+        "explicit-home",
+        "cli",
+        "linux",
+        custom_home,
+        custom_home / "hermes-agent",
+        custom_home / "hermes-agent/venv/bin/hermes",
+        True,
+    )
+    path = Candidate(
+        "path-hermes",
+        "path",
+        "linux",
+        custom_home,
+        checkout,
+        executable,
+    )
+
+    def probe(candidate):
+        return ProbeResult(
+            candidate == path,
+            "0.21.1",
+            checkout,
+            candidate.executable,
+        )
+
+    runtime = select_runtime(RuntimeDiscovery(probe=probe).classify([explicit, path]))
+    assert runtime.runtime_id == "explicit-home"
+    assert runtime.home == custom_home
+    assert runtime.executable == executable
+    assert runtime.usable
+
+
 @pytest.mark.parametrize("explicit_first", [True, False])
 @pytest.mark.parametrize("other_config", [True, False])
 def test_aliases_preserve_unconfigured_explicit_home(tmp_path, explicit_first, other_config):
