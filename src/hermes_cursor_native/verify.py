@@ -228,14 +228,27 @@ def run_contract_checks(
     }
 
 
+def _resolve_probe_source(runtime: Runtime) -> Path | None:
+    if runtime.source_root is not None:
+        root = Path(runtime.source_root)
+        return root if root.is_dir() else None
+    if runtime.executable is None:
+        return None
+    executable = Path(runtime.executable).resolve()
+    for parent in executable.parents:
+        if (parent / "providers" / "base.py").is_file():
+            return parent
+    return None
+
+
 def resolve_status_bridge(runtime: Runtime, profile: str) -> tuple[Path | None, tuple[str, ...]]:
     """Use the selected runtime's installed provider resolver without starting a bridge."""
     home = Path(runtime.home)
     selected_home = home if profile == "default" else home / "profiles" / profile
     python = resolve_hermes_python(runtime)
-    source = Path(runtime.source_root) if runtime.source_root else None
+    source = _resolve_probe_source(runtime)
     note = "bridge resolver unavailable: selected Hermes Python missing"
-    if python is not None and source is not None and source.is_dir():
+    if python is not None and source is not None:
         script = """
 import importlib
 import json

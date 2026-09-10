@@ -324,7 +324,10 @@ def execute_install_plan(
         ) from exc
     if live_version != plan.runtime.version:
         raise InstallerError("Hermes executable identity changed after approval")
-    if live_source is not None and live_source.resolve() != source.resolve():
+    if plan.runtime.source_root is not None:
+        if live_source is None or live_source.resolve() != source.resolve():
+            raise InstallerError("Hermes runtime source changed after approval")
+    elif live_source is not None and live_source.resolve() != source.resolve():
         raise InstallerError("Hermes runtime source changed after approval")
 
     stamp = timestamp()
@@ -350,7 +353,10 @@ def execute_install_plan(
         plugin_mutated = True
         plugin_path = deploy_plugin(package_root, plugin_home)
 
-        payload = download(plan.artifact["url"])
+        try:
+            payload = download(plan.artifact["url"])
+        except (urllib.error.URLError, OSError) as exc:
+            raise InstallerError(f"Bridge download failed: {exc}") from exc
         verify_sha256(payload, plan.artifact["sha256"])
         if bridge_root.exists():
             backup_root.mkdir(parents=True, exist_ok=True)

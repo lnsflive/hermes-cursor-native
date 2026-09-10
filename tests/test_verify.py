@@ -8,7 +8,7 @@ import pytest
 import hermes_cursor_native.cli as cli
 import hermes_cursor_native.verify as verify
 from hermes_cursor_native.discovery import Runtime
-from hermes_cursor_native.verify import _safe_auth_status, collect_receipt
+from hermes_cursor_native.verify import _safe_auth_status, collect_receipt, resolve_status_bridge
 
 
 @pytest.mark.parametrize(
@@ -270,3 +270,27 @@ def test_receipt_detects_plugin_layout(tmp_path, monkeypatch, profile, layout):
     receipt = collect_receipt(runtime, bridge_path=None, profile=profile)
     assert receipt.plugin_installed is (layout != "missing")
     assert receipt.plugin_path == str(plugin)
+
+
+def test_resolve_status_bridge_uses_executable_parent_source(tmp_path, monkeypatch):
+    checkout = tmp_path / "checkout"
+    (checkout / "providers").mkdir(parents=True)
+    (checkout / "providers/base.py").write_text("#\n", encoding="utf-8")
+    hermes = checkout / "bin/hermes"
+    hermes.parent.mkdir(parents=True)
+    hermes.write_text("#\n", encoding="utf-8")
+    home = tmp_path / "home"
+    home.mkdir()
+    runtime = Runtime("test", ("cli",), "linux", home, None, hermes, "0.21.1", True, "active")
+    observed: list[Path] = []
+
+    def fake_run(args, **kwargs):
+        observed.append(kwargs["cwd"])
+        return CompletedProcess(args, 0, '{"bridge": "/tmp/bridge"}', "")
+
+    monkeypatch.setattr(verify.subprocess, "run", fake_run)
+    monkeypatch.setattr(verify, "resolve_hermes_python", lambda _: tmp_path / "python")
+    bridge, notes = resolve_status_bridge(runtime, "default")
+    assert bridge == Path("/tmp/bridge")
+    assert observed == [checkout]
+    assert notes == ()
