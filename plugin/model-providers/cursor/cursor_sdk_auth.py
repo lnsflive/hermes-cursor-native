@@ -358,7 +358,8 @@ def login(
     if tokens is None:
         raise CursorAuthError(
             "Login did not complete (timed out or was cancelled). Run "
-            "`hermes cursor login` to try again."
+            "`hermes model` and pick Cursor to sign in, or "
+            "`hermes-cursor-native login`, to try again."
         )
 
     expires_at_ms = int(time.time() * 1000) + int(api_key_ttl_ms)

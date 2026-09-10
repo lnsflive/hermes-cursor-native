@@ -74,7 +74,7 @@ def collect_candidates(
         )
 
     explicit_home = env.get("HERMES_HOME", "").strip()
-    if explicit_home and exists(Path(explicit_home)):
+    if explicit_home:
         home = Path(explicit_home)
         root = home / "hermes-agent"
         candidates.append(
@@ -143,7 +143,7 @@ def collect_candidates(
     path_executable = which_hermes()
     if path_executable is not None:
         source_root = infer_source_root(path_executable)
-        if explicit_home and exists(Path(explicit_home)):
+        if explicit_home:
             home = Path(explicit_home)
         elif exists(Path.home() / ".hermes"):
             home = Path.home() / ".hermes"
