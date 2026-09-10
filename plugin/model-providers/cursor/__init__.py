@@ -33,10 +33,11 @@ class CursorProfile(ProviderProfile):
         if not resolved_key:
             return None
         try:
-            from .cursor_bridge_client import CursorBridgeClient
+            from .cursor_bridge_client import CursorBridgeClient, load_bridge_settings
             from .cursor_bridge_transport import resolve_bridge_command
 
-            if not resolve_bridge_command():
+            settings = load_bridge_settings()
+            if not resolve_bridge_command(str(settings.get("command") or "")):
                 return None
             client = CursorBridgeClient(api_key=resolved_key)
             try:

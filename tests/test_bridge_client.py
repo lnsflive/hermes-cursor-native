@@ -5,7 +5,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CURSOR_DIR = ROOT / "plugin/model-providers/cursor"
 BRIDGE_CLIENT = CURSOR_DIR / "cursor_bridge_client.py"
+CURSOR_INIT = CURSOR_DIR / "__init__.py"
 SDK_AUTH = CURSOR_DIR / "cursor_sdk_auth.py"
+
+
+def test_fetch_models_checks_configured_bridge_command() -> None:
+    text = CURSOR_INIT.read_text(encoding="utf-8")
+    assert "load_bridge_settings" in text
+    assert 'resolve_bridge_command(str(settings.get("command")' in text
 
 
 def test_missing_credentials_message_mentions_supported_login_commands() -> None:

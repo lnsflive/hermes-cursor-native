@@ -261,6 +261,19 @@ def run_cursor_oauth(
     raise InstallerError(f"Cursor OAuth failed: {detail}")
 
 
+def install_source_root(plan: InstallPlan) -> Path:
+    """Return the Hermes checkout used for install commands and contract probes."""
+    if plan.runtime.source_root is not None:
+        root = Path(plan.runtime.source_root)
+    elif plan.capabilities.source_root is not None:
+        root = Path(plan.capabilities.source_root)
+    else:
+        raise InstallerError("Hermes runtime has no usable source checkout for installation")
+    if not root.is_dir():
+        raise InstallerError(f"Hermes source checkout is missing: {root}")
+    return root
+
+
 def deploy_plugin(package_root: Path, hermes_home: Path) -> Path:
     source = package_root / "plugin" / "model-providers" / "cursor"
     if not source.is_dir():
@@ -297,7 +310,7 @@ def execute_install_plan(
     hermes = Path(plan.runtime.executable)  # type: ignore[arg-type]
     if not hermes.is_file():
         raise InstallerError("Approved Hermes executable no longer exists")
-    source = Path(plan.runtime.source_root) if plan.runtime.source_root is not None else Path(".")
+    source = install_source_root(plan)
     actual_executable_sha256 = hashlib.sha256(hermes.read_bytes()).hexdigest()
     if not plan.executable_sha256 or not hmac.compare_digest(
         actual_executable_sha256, plan.executable_sha256
@@ -311,10 +324,7 @@ def execute_install_plan(
         ) from exc
     if live_version != plan.runtime.version:
         raise InstallerError("Hermes executable identity changed after approval")
-    if (
-        plan.runtime.source_root is not None
-        and (live_source is None or live_source.resolve() != source.resolve())
-    ):
+    if live_source is not None and live_source.resolve() != source.resolve():
         raise InstallerError("Hermes runtime source changed after approval")
 
     stamp = timestamp()

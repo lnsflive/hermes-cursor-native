@@ -18,6 +18,7 @@ from hermes_cursor_native.installer import (
     InstallerError,
     deploy_plugin,
     execute_install_plan,
+    install_source_root,
     require_approval,
     run_command,
     run_cursor_oauth,
@@ -271,6 +272,35 @@ def test_bridge_backup_failure_preserves_existing_install(tmp_path, monkeypatch,
         tmp_path, monkeypatch, existing=True, failure=failure,
         native_runner=False, profile="default",
     )
+
+
+def test_install_source_root_uses_capability_probe(tmp_path):
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    runtime = Runtime(
+        "path-hermes", ("cli",), "linux", tmp_path / "home", None,
+        tmp_path / "bin/hermes", "0.21.1", True, "active",
+    )
+    capabilities = CapabilityReport(
+        runtime_id="path-hermes",
+        hermes_version="0.21.1",
+        source_root=checkout,
+        plugin_seam=True,
+        provider_client_seam=True,
+        plugin_registered=True,
+        client_contract=True,
+    )
+    plan = InstallPlan(
+        runtime=runtime,
+        profile="default",
+        manifest_version="0.2.0a1",
+        artifact_key="linux-x64",
+        artifact={"url": "https://example.invalid/bridge.tar.gz", "sha256": "0" * 64},
+        executable_sha256="0" * 64,
+        operations=(),
+        capabilities=capabilities,
+    )
+    assert install_source_root(plan) == checkout
 
 
 def test_execute_install_plan_wraps_executable_probe_failures(tmp_path):
