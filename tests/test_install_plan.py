@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path, PurePosixPath
 
 import pytest
@@ -11,6 +12,7 @@ from hermes_cursor_native.discovery import Runtime
 from hermes_cursor_native.install_plan import (
     InstallBlockedError,
     build_install_plan,
+    resolve_profile_home,
     validate_profile_name,
 )
 from hermes_cursor_native.manifest import InstallManifest
@@ -60,6 +62,19 @@ def _linux_runtime(root: Path) -> Runtime:
         True,
         "active",
     )
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlink creation requires elevation on Windows")
+def test_resolve_profile_home_rejects_symlink_escape(tmp_path) -> None:
+    home = tmp_path / "home"
+    profiles = home / "profiles"
+    profiles.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (profiles / "evil").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(InstallBlockedError, match="resolves outside"):
+        resolve_profile_home(home, "evil")
 
 
 @pytest.mark.parametrize(

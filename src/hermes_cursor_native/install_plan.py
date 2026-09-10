@@ -17,6 +17,23 @@ class InstallBlockedError(RuntimeError):
     """Raised when installation preconditions are not satisfied."""
 
 
+def resolve_profile_home(hermes_home: Path, profile: str) -> Path:
+    """Return the resolved profile estate root, rejecting symlink escapes."""
+    validate_profile_name(profile)
+    base = hermes_home.expanduser().resolve()
+    if profile == "default":
+        return base
+    profiles_root = (base / "profiles").resolve()
+    selected = (profiles_root / profile).resolve()
+    try:
+        selected.relative_to(profiles_root)
+    except ValueError:
+        raise InstallBlockedError(
+            f"Hermes profile {profile!r} resolves outside {profiles_root}"
+        ) from None
+    return selected
+
+
 def validate_profile_name(profile: str) -> None:
     """Reject profile values that escape ``<HERMES_HOME>/profiles`` when joined."""
     if profile == "default":

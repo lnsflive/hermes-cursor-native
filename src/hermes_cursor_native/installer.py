@@ -19,7 +19,7 @@ from functools import partial
 from pathlib import Path, PurePosixPath
 
 from .discovery import Runtime
-from .install_plan import InstallPlan, validate_profile_name
+from .install_plan import InstallPlan, resolve_profile_home, validate_profile_name
 from .verify import InstallReceipt, collect_receipt
 
 
@@ -314,9 +314,7 @@ def execute_install_plan(
     backup_root = Path(plan.runtime.home) / "cursor-native" / "backups" / stamp
     plugin_backup: Path | None = None
     plugin_mutated = False
-    plugin_home = Path(plan.runtime.home)
-    if plan.profile != "default":
-        plugin_home = plugin_home / "profiles" / plan.profile
+    plugin_home = resolve_profile_home(Path(plan.runtime.home), plan.profile)
     plugin_path = plugin_home / "plugins" / "model-providers" / "cursor"
     bridge_backup: Path | None = None
     bridge_mutated = False

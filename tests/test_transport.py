@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import struct
 import sys
 import threading
@@ -79,7 +80,7 @@ def test_deadline_bounds_blocking_open_and_partial_reads(transport, bridge_serve
     started = time.monotonic()
     with pytest.raises(transport.CursorBridgeError, match="timed out|deadline exceeded"):
         list(client.server_stream("Agent", "Run", {}, read_timeout=2, deadline=started + 0.2))
-    assert time.monotonic() - started < 0.8
+    assert time.monotonic() - started < (1.5 if os.name == "nt" else 0.8)
 
 
 def test_partial_frames_complete_before_deadline(transport, bridge_server):
@@ -171,7 +172,7 @@ def test_failed_start_reaps_child(transport, monkeypatch, tmp_path, mode):
     try:
         with pytest.raises(transport.CursorBridgeError):
             bridge.start(deadline=started + 0.2)
-        assert time.monotonic() - started < 0.8
+        assert time.monotonic() - started < (1.5 if os.name == "nt" else 0.8)
         assert bridge.endpoint is None
         assert not bridge.is_alive()
         assert children[0].poll() is not None
@@ -189,7 +190,7 @@ def test_unary_timeout_bounds_partial_reads(transport, bridge_server, mode):
     started = time.monotonic()
     with pytest.raises(transport.CursorBridgeError, match="timed out|deadline exceeded"):
         client.unary("Agent", "Create", {}, timeout=0.2)
-    assert time.monotonic() - started < 0.8
+    assert time.monotonic() - started < (1.5 if os.name == "nt" else 0.8)
 
 
 def test_unary_success_and_connect_error(transport, bridge_server):

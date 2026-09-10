@@ -15,7 +15,7 @@ from .install_plan import (
     InstallBlockedError,
     InstallPlan,
     build_install_plan,
-    validate_profile_name,
+    resolve_profile_home,
 )
 from .installer import (
     InstallerError,
@@ -154,7 +154,7 @@ def main(
             getattr(args, "hermes_home", None),
         )
         _require_local_runtime(runtime, "status")
-        validate_profile_name(args.profile)
+        resolve_profile_home(Path(runtime.home), args.profile)
         bridge, notes = resolve_status_bridge(runtime, args.profile)
         receipt = collect_receipt(runtime, bridge_path=bridge, profile=args.profile, notes=notes)
         if args.json:
@@ -203,10 +203,7 @@ def main(
             manifest=manifest,
             profile=args.profile,
             architecture=architecture(),
-            profile_exists=(
-                args.profile == "default"
-                or (Path(runtime.home) / "profiles" / args.profile).is_dir()
-            ),
+            profile_exists=resolve_profile_home(Path(runtime.home), args.profile).is_dir(),
             switch_default_model=args.switch_default_model,
             run_oauth=args.oauth,
         )
