@@ -13,7 +13,7 @@ import tarfile
 import tempfile
 import urllib.request
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path, PurePosixPath
@@ -393,7 +393,10 @@ def execute_install_plan(
 
         _checked(run, [str(hermes), *profile_args, "auth", "status", "cursor"], source)
         receipt = collect_receipt(
-            plan.runtime, bridge_path=bridge, profile=plan.profile, notes=tuple(notes),
+            replace(plan.runtime, source_root=source),
+            bridge_path=bridge,
+            profile=plan.profile,
+            notes=tuple(notes),
         )
         if not receipt.contract_checks.get("plugin_registered"):
             raise InstallerError("Post-install verification failed: cursor plugin not registered")

@@ -274,6 +274,111 @@ def test_bridge_backup_failure_preserves_existing_install(tmp_path, monkeypatch,
     )
 
 
+def test_execute_install_plan_passes_probed_source_to_receipt(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    hermes = tmp_path / "bin/hermes"
+    hermes.parent.mkdir()
+    hermes.write_bytes(b"hermes")
+    hermes.chmod(0o755)
+
+    package = tmp_path / "package"
+    plugin = package / "plugin/model-providers/cursor"
+    plugin.mkdir(parents=True)
+    (plugin / "plugin.yaml").write_text("kind: model-provider\n", encoding="utf-8")
+
+    bridge_name = "cursor-sdk-bridge"
+    archive = io.BytesIO()
+    with tarfile.open(fileobj=archive, mode="w:gz") as tar:
+        data = b"#!/bin/sh\necho bridge\n"
+        info = tarfile.TarInfo(name=f"bin/{bridge_name}")
+        info.size = len(data)
+        info.mode = 0o755
+        tar.addfile(info, io.BytesIO(data))
+    digest = hashlib.sha256(archive.getvalue()).hexdigest()
+
+    runtime = Runtime(
+        "path-hermes", ("cli",), "linux", home, None, hermes, "0.21.1", True, "active",
+    )
+    capabilities = CapabilityReport(
+        runtime_id="path-hermes",
+        hermes_version="0.21.1",
+        source_root=checkout,
+        plugin_seam=True,
+        provider_client_seam=True,
+        plugin_registered=True,
+        client_contract=True,
+    )
+    plan = build_install_plan(
+        runtime=runtime,
+        manifest=InstallManifest(
+            version="0.2.0a1",
+            artifacts={
+                "linux-x64": {
+                    "filename": "bridge.tar.gz",
+                    "sha256": digest,
+                    "url": "https://example.invalid/bridge.tar.gz",
+                }
+            },
+        ),
+        profile="default",
+        profile_exists=True,
+        architecture="x64",
+        capability_report=capabilities,
+    )
+
+    received: list[Runtime] = []
+
+    def fake_receipt(runtime, **kwargs):
+        received.append(runtime)
+        return InstallReceipt(
+            host="test",
+            runtime_id=runtime.runtime_id,
+            hermes_version="0.21.1",
+            hermes_home=str(home),
+            plugin_path="",
+            plugin_installed=True,
+            bridge_path="",
+            bridge_installed=True,
+            auth_status="logged out",
+            auth_source="",
+            model_catalog_count=None,
+            model_catalog_error="",
+            chat_probe="skipped",
+            contract_checks={
+                "plugin_seam": True,
+                "provider_client_seam": True,
+                "plugin_registered": True,
+                "client_contract": True,
+            },
+            notes=(),
+        )
+
+    import hermes_cursor_native.installer as installer_mod
+
+    monkeypatch.setattr(installer_mod, "collect_receipt", fake_receipt)
+
+    def run(args, cwd, interactive=False):
+        if args[-2:] == ["config", "path"]:
+            config = home / "config.yaml"
+            config.parent.mkdir(parents=True, exist_ok=True)
+            return CommandResult(0, str(config), "")
+        if args[-3:] == ["auth", "status", "cursor"]:
+            return CommandResult(0, "cursor: logged out\n", "")
+        return CommandResult(0, "", "")
+
+    execute_install_plan(
+        plan,
+        package_root=package,
+        approved=True,
+        run=run,
+        download=lambda _url: archive.getvalue(),
+        executable_probe=lambda _runtime: ("0.21.1", None),
+    )
+    assert received[0].source_root == checkout
+
+
 def test_install_source_root_uses_capability_probe(tmp_path):
     checkout = tmp_path / "checkout"
     checkout.mkdir()
