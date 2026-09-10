@@ -339,7 +339,11 @@ def execute_install_plan(
     )
     if resolved_live_source is not None and resolved_live_source.resolve() != source.resolve():
         raise InstallerError("Hermes runtime source changed after approval")
-    if plan.runtime.source_root is not None and live_source is None and resolved_live_source is None:
+    if (
+        plan.runtime.source_root is not None
+        and live_source is None
+        and resolved_live_source is None
+    ):
         raise InstallerError("Hermes runtime source changed after approval")
 
     stamp = timestamp()
