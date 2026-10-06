@@ -677,6 +677,8 @@ class CursorBridgeClient:
         usage_payload: dict[str, Any] = {}
         status = ""
         error_code = None
+        sdk_error_detail = None
+        sdk_error_code = None
         try:
             stream_iter = transport.server_stream(
                 "SdkAgentService",
@@ -700,14 +702,29 @@ class CursorBridgeClient:
                         if isinstance(maybe_usage, dict):
                             usage_payload = maybe_usage
                     continue
+                sdk_message = message.get("sdkMessage")
+                if isinstance(sdk_message, dict):
+                    status_message = sdk_message.get("message")
+                    if (
+                        isinstance(status_message, dict)
+                        and str(status_message.get("status") or "").upper() == "ERROR"
+                    ):
+                        detail = status_message.get("message")
+                        if isinstance(detail, str) and detail.strip():
+                            sdk_error_detail = detail.strip()
+                        code = status_message.get("errorCode") or status_message.get("code")
+                        if code is not None:
+                            sdk_error_code = str(code)
+                    continue
                 if "done" in message:
                     break
-                # sdk_message / interaction_update / keepalives: ignored.
+                # Non-error sdk messages, interaction updates, and keepalives are ignored.
         finally:
             self._active_runs.pop(agent_id, None)
             self._cleanup_agent(transport, agent_id, deadline=deadline)
 
         captured = list(run.captured_calls)
+        error_code = error_code or sdk_error_code
         if (
             not captured
             and status
@@ -719,7 +736,7 @@ class CursorBridgeClient:
             code_note = f" (code={error_code})" if error_code else ""
             raise CursorBridgeError(
                 f"Cursor run ended with status {status}{code_note}: "
-                f"{final_text or 'no result text'}",
+                f"{sdk_error_detail or final_text or 'no result text'}",
                 code=str(error_code) if error_code else None,
             )
 
